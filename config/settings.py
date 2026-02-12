@@ -54,6 +54,10 @@ class Settings:
     nombre_reporte: str = "registro_directo_cfdi"
     incluir_fecha_en_reporte: bool = True
 
+    # Configuracion de matching avanzado (paso 2.5: token_set + historial)
+    habilitar_token_set_historial: bool = True  # Toggle para paso 2.5
+    min_longitud_token_set: int = 5  # Min chars para activar token_set_ratio
+
     # Configuracion de logging
     log_level: str = "INFO"
     log_format: str = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
@@ -78,6 +82,8 @@ class Settings:
             usuario_sistema=os.getenv('USUARIO_SISTEMA', 'AGENTE3_SAT'),
             sucursal=int(os.getenv('SUCURSAL', '5')),
             log_level=os.getenv('LOG_LEVEL', 'INFO'),
+            habilitar_token_set_historial=os.getenv('HABILITAR_TOKEN_SET_HISTORIAL', 'true').lower() == 'true',
+            min_longitud_token_set=int(os.getenv('MIN_LONGITUD_TOKEN_SET', '5')),
         )
 
 

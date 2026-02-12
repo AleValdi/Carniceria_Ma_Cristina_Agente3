@@ -20,6 +20,7 @@ class ProductoERP:
     codigo_sat: str       # CodigoSAT
     porc_iva: Decimal     # PorcIva (0 o 16)
     servicio: bool        # Flag de servicio
+    frecuencia: int = 0   # Veces comprado a un proveedor (para desambiguacion)
 
 
 @dataclass

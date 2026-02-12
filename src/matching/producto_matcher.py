@@ -65,12 +65,20 @@ class ProductoMatcher:
         if resultado.matcheado:
             return resultado
 
-        # Paso 2: Historial del proveedor + fuzzy
+        # Paso 2: Historial del proveedor + fuzzy (token_sort_ratio)
         resultado = self._match_historial_proveedor(
             concepto, nombre_normalizado, clave_proveedor
         )
         if resultado.matcheado:
             return resultado
+
+        # Paso 2.5: Historial del proveedor + token_set_ratio + frecuencia
+        if settings.habilitar_token_set_historial:
+            resultado = self._match_historial_token_set(
+                concepto, nombre_normalizado, clave_proveedor
+            )
+            if resultado.matcheado:
+                return resultado
 
         # Paso 3: Codigo SAT + fuzzy
         resultado = self._match_codigo_sat(concepto, nombre_normalizado)
@@ -232,6 +240,113 @@ class ProductoMatcher:
             )
 
         return ResultadoMatchProducto(concepto_xml=concepto)
+
+    def _match_historial_token_set(
+        self,
+        concepto: Concepto,
+        nombre_normalizado: str,
+        clave_proveedor: str
+    ) -> ResultadoMatchProducto:
+        """
+        Paso 2.5: Historial del proveedor + token_set_ratio + desambiguacion por frecuencia.
+        Maneja nombres abreviados (ej: 'JALAPENO' vs 'CHILE JALAPENO VERDE').
+        """
+        # Guard: rechazar nombres muy cortos
+        if len(nombre_normalizado) < settings.min_longitud_token_set:
+            return ResultadoMatchProducto(concepto_xml=concepto)
+
+        productos_freq = self.historial.obtener_productos_con_frecuencia(clave_proveedor)
+        if not productos_freq:
+            return ResultadoMatchProducto(concepto_xml=concepto)
+
+        mejor, candidatos = self._fuzzy_match_token_set(
+            nombre_normalizado, productos_freq, self.umbral_match
+        )
+
+        if mejor:
+            producto, score = mejor
+            return ResultadoMatchProducto(
+                concepto_xml=concepto,
+                producto_erp=producto,
+                confianza=score / 100.0,
+                nivel_confianza="ALTA",
+                metodo_match="historial_token_set",
+                candidatos_descartados=candidatos,
+                mensaje=f"Match historial token_set: {producto.codigo} (score {score}, freq {producto.frecuencia})"
+            )
+
+        return ResultadoMatchProducto(concepto_xml=concepto)
+
+    def _fuzzy_match_token_set(
+        self,
+        nombre_normalizado: str,
+        productos: List[ProductoERP],
+        umbral: int
+    ) -> Tuple[Optional[Tuple[ProductoERP, int]], int]:
+        """
+        Fuzzy matching usando token_set_ratio con desambiguacion por frecuencia.
+        token_set_ratio maneja bien nombres abreviados porque compara interseccion de tokens.
+
+        Desambiguacion: si top 2 empatan (gap < margen_ambiguedad), acepta solo si
+        la frecuencia del mejor es >= 2x la del segundo. Si no, rechaza como ambiguo.
+        """
+        candidatos: List[Tuple[ProductoERP, int]] = []
+
+        for producto in productos:
+            nombre_prod = self.cache.obtener_nombre_normalizado(producto.codigo)
+            if not nombre_prod:
+                nombre_prod = normalizar_texto(producto.nombre)
+
+            score = fuzz.token_set_ratio(nombre_normalizado, nombre_prod)
+
+            if score >= umbral:
+                candidatos.append((producto, score))
+
+        if not candidatos:
+            return None, 0
+
+        # Ordenar por score DESC, luego por frecuencia DESC
+        candidatos.sort(key=lambda x: (x[1], x[0].frecuencia), reverse=True)
+
+        mejor_producto, mejor_score = candidatos[0]
+
+        # Detectar ambiguedad con desambiguacion por frecuencia
+        if len(candidatos) > 1:
+            segundo_producto, segundo_score = candidatos[1]
+            gap = mejor_score - segundo_score
+
+            if gap < self.margen_ambiguedad:
+                # Empate: intentar desambiguar por frecuencia
+                freq_mejor = mejor_producto.frecuencia
+                freq_segundo = segundo_producto.frecuencia
+
+                if freq_mejor > 0 and freq_segundo > 0:
+                    if freq_mejor >= 2 * freq_segundo:
+                        # Frecuencia del mejor es >= 2x, aceptar
+                        logger.info(
+                            f"Token_set desambiguado por frecuencia: "
+                            f"'{mejor_producto.nombre}' (score={mejor_score}, freq={freq_mejor}) vs "
+                            f"'{segundo_producto.nombre}' (score={segundo_score}, freq={freq_segundo})"
+                        )
+                        return (mejor_producto, mejor_score), len(candidatos) - 1
+
+                # No se puede desambiguar: rechazar
+                logger.warning(
+                    f"Token_set ambiguo para '{nombre_normalizado}': "
+                    f"{mejor_producto.nombre} ({mejor_score}, freq={mejor_producto.frecuencia}) vs "
+                    f"{segundo_producto.nombre} ({segundo_score}, freq={segundo_producto.frecuencia})"
+                )
+                return None, len(candidatos)
+
+        # Sin ambiguedad, pero verificar que tiene frecuencia
+        if mejor_producto.frecuencia == 0:
+            logger.debug(
+                f"Token_set sin frecuencia para '{nombre_normalizado}': "
+                f"{mejor_producto.nombre} ({mejor_score})"
+            )
+            return None, len(candidatos)
+
+        return (mejor_producto, mejor_score), len(candidatos) - 1
 
     def _fuzzy_match_lista(
         self,

@@ -2,6 +2,7 @@
 Configuración de conexión a base de datos SQL Server (SAV7)
 """
 import os
+import tempfile
 from dataclasses import dataclass
 from typing import Optional
 import pyodbc
@@ -9,6 +10,20 @@ from contextlib import contextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Fix para OpenSSL 3.x en macOS: permite TLS legacy para ODBC Driver 18
+if 'ODBC Driver 18' in os.getenv('DB_DRIVER', '') and not os.environ.get('OPENSSL_CONF'):
+    _openssl_cnf = os.path.join(tempfile.gettempdir(), 'agente3_openssl.cnf')
+    if not os.path.exists(_openssl_cnf):
+        with open(_openssl_cnf, 'w') as f:
+            f.write(
+                "openssl_conf = openssl_init\n"
+                "[openssl_init]\nssl_conf = ssl_sect\n"
+                "[ssl_sect]\nsystem_default = system_default_sect\n"
+                "[system_default_sect]\nMinProtocol = TLSv1\n"
+                "CipherString = DEFAULT@SECLEVEL=0\n"
+            )
+    os.environ['OPENSSL_CONF'] = _openssl_cnf
 
 
 @dataclass
@@ -57,6 +72,7 @@ class DatabaseConfig:
                 f"DATABASE={self.database};"
                 f"UID={self.username};"
                 f"PWD={self.password};"
+                f"TrustServerCertificate=yes;"
                 f"Connection Timeout={self.timeout};"
             )
 
