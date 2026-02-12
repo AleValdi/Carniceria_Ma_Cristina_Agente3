@@ -1,0 +1,42 @@
+# Archivos de configuracion sensibles
+.env
+config/credentials.json
+config/*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# Logs
+logs/
+*.log
+
+# Datos locales
+data/xml_entrada/
+data/xml_procesados/
+data/xml_parciales/
+data/xml_fallidos/
+data/reportes/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Certificados y credenciales
+*.pem
+*.key
+*.cer
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
