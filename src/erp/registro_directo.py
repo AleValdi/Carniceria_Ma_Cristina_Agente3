@@ -316,7 +316,7 @@ class RegistradorDirecto:
             factura_sat.uuid.upper(),                # TimbradoFolioFiscal
             factura_sat.fecha_emision,               # FacturaFecha
             settings.sucursal,                       # Sucursal
-            'TIENDA',                                # Departamento
+            'NA',                                    # Departamento
             'TIENDA',                                # Afectacion
             metodo_pago,                             # MetododePago
             0,                                       # NumOC

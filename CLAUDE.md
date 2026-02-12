@@ -153,7 +153,7 @@ score = fuzz.token_set_ratio(texto_a, texto_b)     # Paso 2.5
 | `Articulos` | `round(suma_cantidades)` | Redondear: 199.8 -> 200 |
 | `TotalLetra` | `numero_a_letra(total)` | Monto en palabras |
 | `TipoRecepcion` | `'COMPRAS'` | |
-| `Departamento` | `'TIENDA'` | |
+| `Departamento` | `'NA'` | Consistente con registros manuales en produccion |
 | `Afectacion` | `'TIENDA'` | |
 
 ### Campos criticos SAVRecD (detalle)
