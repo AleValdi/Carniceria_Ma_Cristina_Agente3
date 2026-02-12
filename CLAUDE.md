@@ -45,8 +45,8 @@ Agente3/
 │   │   └── registro_directo.py      # INSERT Serie F (cabecera + detalle)
 │   ├── matching/
 │   │   ├── cache_productos.py       # Indices en memoria: por_nombre, por_codigo_sat
-│   │   ├── historial_compras.py     # Productos que el proveedor ha comprado antes
-│   │   └── producto_matcher.py      # Pipeline de matching de 4 pasos (CORE)
+│   │   ├── historial_compras.py     # Productos que el proveedor ha comprado antes + frecuencia
+│   │   └── producto_matcher.py      # Pipeline de matching de 5 pasos (CORE)
 │   └── reports/
 │       └── excel_generator.py       # Reporte Excel con 6 hojas
 ```
@@ -57,17 +57,24 @@ Agente3/
 
 ## Pipeline de Matching de Productos (CORE)
 
-El motor de matching esta en `src/matching/producto_matcher.py`. Cascada de 4 pasos, del mas preciso al mas general:
+El motor de matching esta en `src/matching/producto_matcher.py`. Cascada de 5 pasos, del mas preciso al mas general:
 
 ```
 Paso 1: MATCH EXACTO por nombre normalizado
   -> Busqueda O(1) en diccionario
   -> Si encuentra -> confianza 100%, nivel EXACTO
 
-Paso 2: HISTORIAL PROVEEDOR + fuzzy
+Paso 2: HISTORIAL PROVEEDOR + token_sort_ratio
   -> Productos que el proveedor ha comprado antes (query SAVRecD/SAVRecC)
   -> fuzz.token_sort_ratio >= 90 (UMBRAL_MATCH_PRODUCTO)
   -> nivel ALTA
+
+Paso 2.5: HISTORIAL PROVEEDOR + token_set_ratio + frecuencia (NUEVO)
+  -> Mismos productos del historial, pero con token_set_ratio (mas permisivo)
+  -> Maneja nombres abreviados: "JALAPENO" vs "CHILE JALAPENO VERDE" -> score 100
+  -> Desambiguacion por frecuencia de compra: acepta si freq mejor >= 2x segundo
+  -> Guards: min 5 chars, toggle desactivable, requiere freq > 0
+  -> nivel ALTA, metodo_match = "historial_token_set"
 
 Paso 3: CODIGO SAT + fuzzy
   -> Filtrar catalogo por ClaveProdServ del concepto XML
@@ -82,13 +89,37 @@ Paso 4: CATALOGO COMPLETO fuzzy (ultimo recurso)
 Si nada matchea -> NO_MATCH, reportar para revision manual
 ```
 
+### Paso 2.5: token_set_ratio + desambiguacion
+
+`token_sort_ratio` penaliza nombres abreviados porque compara string completo. `token_set_ratio` compara interseccion de tokens:
+- "JALAPENO" vs "CHILE JALAPENO VERDE" -> token_sort=57, **token_set=100**
+- "ZANAHORIA 10KG" vs "ZANAHORIA" -> token_sort=73, **token_set=100**
+
+Problema: genera ambiguedades (JALAPENO matchea con VERDE y ROJO al 100). Se resuelve con frecuencia historica:
+- Si `freq_mejor >= 2 * freq_segundo` -> aceptar (senal fuerte)
+- Si no -> rechazar como ambiguo (conservador)
+
+**Guards de seguridad:**
+1. Toggle global: `HABILITAR_TOKEN_SET_HISTORIAL=false` desactiva completamente
+2. Longitud minima: `MIN_LONGITUD_TOKEN_SET=5` (evita "SAL", "RON" matcheando con todo)
+3. Sin historial: no ejecutar sin datos del proveedor
+4. Frecuencia cero: no aceptar sin evidencia historica
+5. Empate sin ratio 2x: rechazar como ambiguo
+
+**Campo `frecuencia` en ProductoERP:**
+- `src/erp/models.py`: `frecuencia: int = 0` (default, backward compatible)
+- Se popula en `historial_compras.py` via `obtener_productos_con_frecuencia()`
+- Usa `dataclasses.replace()` para crear copias (no muta objetos del cache compartido)
+
 ### Normalizacion de texto
 
 `normalizar_texto()` en `cache_productos.py`: uppercase, quitar acentos (unicodedata NFD), colapsar espacios, strip.
 
 ### Deteccion de ambiguedad
 
-Si los 2 mejores candidatos puntuan con diferencia < 5 puntos (`margen_ambiguedad`), se rechaza el match y se reporta como ambiguo. Esto evita falsos positivos.
+Pasos 2, 3 y 4: Si los 2 mejores candidatos puntuan con diferencia < 5 puntos (`margen_ambiguedad`), se rechaza el match y se reporta como ambiguo.
+
+Paso 2.5: Ademas del margen de 5 puntos, usa frecuencia historica de compra para desambiguar empates.
 
 ### Libreria de fuzzy matching
 
@@ -96,7 +127,8 @@ Se usa **`rapidfuzz`** (NO fuzzywuzzy). API compatible pero compilada en C/C++, 
 
 ```python
 from rapidfuzz import fuzz
-score = fuzz.token_sort_ratio(texto_a, texto_b)
+score = fuzz.token_sort_ratio(texto_a, texto_b)   # Pasos 2, 3, 4
+score = fuzz.token_set_ratio(texto_a, texto_b)     # Paso 2.5
 ```
 
 ---
@@ -157,10 +189,14 @@ Si `REGISTRAR_PARCIALES=true` (default) y >= 50% de conceptos matchean:
 
 ```env
 # Matching
-UMBRAL_MATCH_PRODUCTO=90        # Minimo fuzzy score (pasos 2-3)
+UMBRAL_MATCH_PRODUCTO=90        # Minimo fuzzy score (pasos 2, 2.5, 3)
 UMBRAL_MATCH_EXACTO=95          # Minimo fuzzy score (paso 4, catalogo completo)
 MIN_CONCEPTOS_MATCH_PORCENTAJE=50  # % minimo para registrar
 REGISTRAR_PARCIALES=true        # Registrar con match parcial
+
+# Matching avanzado (paso 2.5)
+HABILITAR_TOKEN_SET_HISTORIAL=true   # Toggle para paso 2.5 (false = pipeline original de 4 pasos)
+MIN_LONGITUD_TOKEN_SET=5             # Min chars para activar token_set_ratio
 
 # Registro
 ESTATUS_REGISTRO=No Pagada
@@ -264,10 +300,14 @@ DELETE FROM SAVRecD WHERE Serie = 'F' AND NumRec = @numrec;
 DELETE FROM SAVRecC WHERE Serie = 'F' AND NumRec = @numrec;
 ```
 
+### Registros de prueba existentes en TEST
+F-67768 (AGRODAK, $1,900, 4 lineas), F-67769 (QUIRINO, $3,240, 1 linea parcial), F-67770 (AGROCHILEROS, $946.40, 2 lineas).
+Creados con `Comprador='AGENTE3_SAT'`. Ver `RESULTADO_PRUEBAS.md` para detalles.
+
 ### Siguiente NumRec disponible
 ```sql
 SELECT ISNULL(MAX(NumRec), 0) + 1 FROM SAVRecC WHERE Serie = 'F';
--- Al 12 Feb 2026: 67768
+-- Al 12 Feb 2026: 67771 (post-pruebas)
 ```
 
 ---
