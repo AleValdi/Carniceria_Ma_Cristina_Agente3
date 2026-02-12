@@ -7,9 +7,6 @@ from dataclasses import dataclass
 from typing import Optional
 import pyodbc
 from contextlib import contextmanager
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Fix para OpenSSL 3.x en macOS: permite TLS legacy para ODBC Driver 18
 if 'ODBC Driver 18' in os.getenv('DB_DRIVER', '') and not os.environ.get('OPENSSL_CONF'):

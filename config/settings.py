@@ -26,6 +26,11 @@ BASE_DIR = get_base_dir()
 # Cargar variables de entorno desde el directorio base
 load_dotenv(BASE_DIR / '.env')
 
+# Si existe .env.local, sobreescribir con config local (desarrollo remoto)
+_env_local = BASE_DIR / '.env.local'
+if _env_local.exists():
+    load_dotenv(_env_local, override=True)
+
 
 @dataclass
 class Settings:

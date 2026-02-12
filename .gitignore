@@ -1,5 +1,6 @@
 # Archivos de configuracion sensibles
 .env
+.env.local
 config/credentials.json
 config/*.json
 

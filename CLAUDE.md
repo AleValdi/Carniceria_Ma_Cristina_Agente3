@@ -185,7 +185,15 @@ Si `REGISTRAR_PARCIALES=true` (default) y >= 50% de conceptos matchean:
 
 ---
 
-## Configuracion (.env)
+## Configuracion (.env y .env.local)
+
+El sistema carga variables de entorno en dos capas:
+1. `.env` — configuracion base (servidor de produccion/test)
+2. `.env.local` — override local para desarrollo remoto (si existe)
+
+`config/settings.py` carga primero `.env` y luego `.env.local` con `override=True`. Esto permite que cada desarrollador tenga su propia configuracion de conexion sin modificar el `.env` del servidor.
+
+### .env (servidor, NO modificar para desarrollo)
 
 ```env
 # Matching
@@ -208,6 +216,19 @@ DB_SERVER=localhost              # localhost en el servidor, 100.73.181.41 via T
 DB_DATABASE=DBSAV71_TEST         # DBSAV71 para produccion
 DB_DRIVER={SQL Server Native Client 11.0}  # En el servidor Windows
 ```
+
+### .env.local (desarrollo remoto, NO se commitea)
+
+Solo define las variables que cambian respecto al `.env` base:
+
+```env
+DB_SERVER=100.73.181.41
+DB_DRIVER={ODBC Driver 18 for SQL Server}
+DB_USERNAME=tu_usuario
+DB_PASSWORD=tu_password
+```
+
+Para configurar: `cp .env.local.example .env.local` y llenar credenciales. El `.gitignore` ya excluye `.env.local`.
 
 ---
 
