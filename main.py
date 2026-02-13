@@ -25,6 +25,8 @@ from src.erp.sav7_connector import SAV7Connector
 from src.erp.proveedor_repo import ProveedorRepository
 from src.erp.producto_repo import ProductoRepository
 from src.erp.registro_directo import RegistradorDirecto
+from src.erp.registro_nc import RegistradorNC
+from src.erp.factura_repo import FacturaRepository
 from src.erp.models import ResultadoRegistro, ResultadoMatchProducto
 from src.matching.cache_productos import CacheProductos
 from src.matching.historial_compras import HistorialCompras
@@ -152,18 +154,23 @@ def procesar_factura(
     proveedor_repo: ProveedorRepository,
     matcher: ProductoMatcher,
     registrador: RegistradorDirecto,
+    registrador_nc: RegistradorNC,
     dry_run: bool = False,
 ) -> Tuple[ResultadoRegistro, List[ResultadoMatchProducto]]:
     """
-    Procesar una factura individual.
+    Procesar una factura individual (Ingreso o Egreso/NC).
 
     Returns:
         Tupla de (ResultadoRegistro, lista de matches)
     """
     uuid = factura.uuid.upper()
 
-    # Filtrar: solo tipo Ingreso
-    if factura.tipo_comprobante != TipoComprobante.INGRESO:
+    # Bifurcar: Egreso (Nota de Credito) vs Ingreso (Factura)
+    if factura.tipo_comprobante == TipoComprobante.EGRESO:
+        return procesar_nota_credito(
+            factura, proveedor_repo, matcher, registrador_nc, dry_run
+        )
+    elif factura.tipo_comprobante != TipoComprobante.INGRESO:
         return ResultadoRegistro(
             exito=False,
             factura_uuid=uuid,
@@ -171,6 +178,8 @@ def procesar_factura(
             mensaje=f"Tipo de comprobante no soportado: {factura.tipo_comprobante.value}",
             error="TIPO_NO_SOPORTADO"
         ), []
+
+    # --- Flujo INGRESO (sin cambios) ---
 
     # Verificar que tiene conceptos
     if not factura.conceptos:
@@ -198,6 +207,71 @@ def procesar_factura(
 
     # Registrar en ERP
     resultado = registrador.registrar(factura, proveedor, matches, dry_run=dry_run)
+
+    return resultado, matches
+
+
+def procesar_nota_credito(
+    factura: Factura,
+    proveedor_repo: ProveedorRepository,
+    matcher: ProductoMatcher,
+    registrador_nc: RegistradorNC,
+    dry_run: bool = False,
+) -> Tuple[ResultadoRegistro, List[ResultadoMatchProducto]]:
+    """
+    Procesar una Nota de Credito (CFDI tipo Egreso).
+
+    Returns:
+        Tupla de (ResultadoRegistro, lista de matches)
+    """
+    uuid = factura.uuid.upper()
+
+    logger.info(f"  Tipo: NOTA DE CREDITO (Egreso)")
+    if factura.cfdi_relacionados:
+        logger.info(
+            f"  CFDI Relacionado: {factura.cfdi_relacionados[0].uuid[:12]}... "
+            f"(TipoRelacion={factura.cfdi_relacionados[0].tipo_relacion})"
+        )
+
+    # Verificar que tiene CFDI relacionados
+    if not factura.cfdi_relacionados:
+        return ResultadoRegistro(
+            exito=False,
+            factura_uuid=uuid,
+            total_conceptos=len(factura.conceptos),
+            es_nota_credito=True,
+            mensaje="NC sin CFDI relacionado en el XML",
+            error="SIN_CFDI_RELACIONADO"
+        ), []
+
+    # Verificar que tiene conceptos
+    if not factura.conceptos:
+        return ResultadoRegistro(
+            exito=False,
+            factura_uuid=uuid,
+            total_conceptos=0,
+            es_nota_credito=True,
+            mensaje="La NC no tiene conceptos",
+            error="SIN_CONCEPTOS"
+        ), []
+
+    # Buscar proveedor por RFC
+    proveedor = proveedor_repo.buscar_por_rfc(factura.rfc_emisor)
+    if not proveedor:
+        return ResultadoRegistro(
+            exito=False,
+            factura_uuid=uuid,
+            total_conceptos=len(factura.conceptos),
+            es_nota_credito=True,
+            mensaje=f"Proveedor no encontrado: RFC {factura.rfc_emisor} ({factura.nombre_emisor})",
+            error="PROVEEDOR_NO_ENCONTRADO"
+        ), []
+
+    # Matchear conceptos contra catalogo ERP (para determinar DEVOLUCIONES vs DESCUENTOS)
+    matches = matcher.matchear_lote(factura.conceptos, proveedor.clave)
+
+    # Registrar NC en ERP
+    resultado = registrador_nc.registrar(factura, proveedor, matches, dry_run=dry_run)
 
     return resultado, matches
 
@@ -252,6 +326,8 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
     proveedor_repo = ProveedorRepository(connector)
     producto_repo = ProductoRepository(connector)
     registrador = RegistradorDirecto(connector)
+    factura_repo = FacturaRepository(connector)
+    registrador_nc = RegistradorNC(connector, factura_repo)
 
     # Cargar catalogo de productos
     logger.info("Cargando catalogo de productos...")
@@ -296,16 +372,22 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
         logger.info(f"  Total: ${float(factura.total):,.2f} | Conceptos: {len(factura.conceptos)}")
 
         resultado, matches = procesar_factura(
-            factura, proveedor_repo, matcher, registrador, dry_run
+            factura, proveedor_repo, matcher, registrador, registrador_nc, dry_run
         )
         resultados.append(resultado)
         todos_matches.append((factura, matches))
 
         # Log resultado
         if resultado.exito:
+            tipo_txt = f" NC {resultado.tipo_nc}" if resultado.es_nota_credito else ""
             parcial_txt = " (PARCIAL)" if resultado.registro_parcial else ""
+            vinc_txt = (
+                f" -> {resultado.factura_vinculada_erp}"
+                if resultado.factura_vinculada_erp else ""
+            )
             logger.info(
-                f"  RESULTADO: EXITOSO{parcial_txt} -> {resultado.numero_factura_erp} "
+                f"  RESULTADO: EXITOSO{tipo_txt}{parcial_txt} -> "
+                f"{resultado.numero_factura_erp}{vinc_txt} "
                 f"({resultado.conceptos_matcheados_count}/{resultado.total_conceptos} conceptos)"
             )
         else:
@@ -319,17 +401,30 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
     fin = datetime.now()
     duracion = (fin - inicio).total_seconds()
 
-    exitosos = sum(1 for r in resultados if r.exito and not r.registro_parcial)
-    parciales = sum(1 for r in resultados if r.exito and r.registro_parcial)
-    fallidos = sum(1 for r in resultados if not r.exito)
+    # Separar facturas Ingreso y NCs Egreso
+    res_ingreso = [r for r in resultados if not r.es_nota_credito]
+    res_nc = [r for r in resultados if r.es_nota_credito]
+
+    exitosos = sum(1 for r in res_ingreso if r.exito and not r.registro_parcial)
+    parciales = sum(1 for r in res_ingreso if r.exito and r.registro_parcial)
+    fallidos_ingreso = sum(1 for r in res_ingreso if not r.exito)
+
+    nc_exitosas = sum(1 for r in res_nc if r.exito)
+    nc_fallidas = sum(1 for r in res_nc if not r.exito)
 
     logger.info(f"\n{'='*60}")
     logger.info(f"RESUMEN DE EJECUCION")
     logger.info(f"{'='*60}")
     logger.info(f"Total procesadas: {len(resultados)}")
-    logger.info(f"  Exitosas:  {exitosos}")
-    logger.info(f"  Parciales: {parciales}")
-    logger.info(f"  Fallidas:  {fallidos}")
+    if res_ingreso:
+        logger.info(f"  Facturas Ingreso: {len(res_ingreso)}")
+        logger.info(f"    Exitosas:  {exitosos}")
+        logger.info(f"    Parciales: {parciales}")
+        logger.info(f"    Fallidas:  {fallidos_ingreso}")
+    if res_nc:
+        logger.info(f"  Notas de Credito: {len(res_nc)}")
+        logger.info(f"    Exitosas:  {nc_exitosas}")
+        logger.info(f"    Fallidas:  {nc_fallidas}")
     logger.info(f"Duracion: {duracion:.1f} segundos")
     logger.info(f"Modo: {'DRY-RUN' if dry_run else 'PRODUCCION'}")
 
@@ -354,10 +449,11 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
     print(f"\n{'='*60}")
     print(f"Agente 3 - Registro Directo CFDI")
     print(f"{'='*60}")
-    print(f"Facturas procesadas: {len(resultados)}")
-    print(f"  Exitosas:  {exitosos}")
-    print(f"  Parciales: {parciales}")
-    print(f"  Fallidas:  {fallidos}")
+    print(f"Total procesadas: {len(resultados)}")
+    if res_ingreso:
+        print(f"  Facturas Ingreso: {len(res_ingreso)} (exitosas: {exitosos}, parciales: {parciales}, fallidas: {fallidos_ingreso})")
+    if res_nc:
+        print(f"  Notas de Credito: {len(res_nc)} (exitosas: {nc_exitosas}, fallidas: {nc_fallidas})")
     print(f"Duracion: {duracion:.1f}s")
     if dry_run:
         print("MODO DRY-RUN: No se realizaron cambios en la BD")

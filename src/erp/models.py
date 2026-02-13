@@ -64,11 +64,29 @@ class ConceptoRegistrado:
 
 
 @dataclass
+class FacturaVinculada:
+    """Factura Serie F encontrada en SAVRecC para vincular con Nota de Credito"""
+    serie: str              # 'F'
+    num_rec: int            # NumRec
+    factura: str            # Campo Factura (folio proveedor)
+    fecha: datetime         # Fecha
+    total: float            # Total
+    saldo: float            # Saldo
+    ncredito_acumulado: float  # NCredito actual acumulado
+    pagado: float           # Pagado
+    estatus: str            # Estatus ('No Pagada', etc.)
+    uuid: str               # TimbradoFolioFiscal
+    proveedor: str          # Clave proveedor
+    subtotal: float         # SubTotal1
+    iva: float              # Iva
+
+
+@dataclass
 class ResultadoRegistro:
-    """Resultado de registrar una factura en el ERP"""
+    """Resultado de registrar una factura o nota de credito en el ERP"""
     exito: bool
     factura_uuid: str
-    numero_factura_erp: Optional[str] = None  # "F-XXXXX"
+    numero_factura_erp: Optional[str] = None  # "F-XXXXX" o "NCF-XXXX"
     conceptos_registrados: List[ConceptoRegistrado] = field(default_factory=list)
     conceptos_no_matcheados: List[ConceptoRegistrado] = field(default_factory=list)
     total_conceptos: int = 0
@@ -76,6 +94,12 @@ class ResultadoRegistro:
     registro_parcial: bool = False  # True si algunos conceptos no matchearon
     mensaje: str = ""
     error: Optional[str] = None
+
+    # Campos para Notas de Credito (opcionales, backward compatible)
+    es_nota_credito: bool = False
+    tipo_nc: str = ""                          # DEVOLUCIONES / DESCUENTOS
+    factura_vinculada_uuid: Optional[str] = None  # UUID de la factura F original
+    factura_vinculada_erp: Optional[str] = None   # "F-XXXXX" de la factura vinculada
 
     @property
     def porcentaje_matcheados(self) -> float:

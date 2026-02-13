@@ -1,11 +1,39 @@
 """
 Cache en memoria del catalogo de productos para busqueda rapida
 """
+import re
 import unicodedata
 from typing import Dict, List, Optional
 from loguru import logger
 
 from src.erp.models import ProductoERP
+
+
+# ---------------------------------------------------------------------------
+# Abreviaturas de marca conocidas (extraidas de XMLs reales de produccion)
+# Formato: ABREVIATURA -> NOMBRE COMPLETO (ambos en UPPERCASE)
+# Estas se expanden SOLO en el texto XML antes de comparar, no en el catalogo.
+# ---------------------------------------------------------------------------
+ABREVIATURAS_MARCA: Dict[str, str] = {
+    'CHX': 'CHIMEX',
+    'SRF': 'SAN RAFAEL',
+    'MDLZ': 'MONDELEZ',      # Mondelez International (Philadelphia, etc.)
+    'TGM': 'TANGAMANGA',      # Marca regional
+}
+
+# ---------------------------------------------------------------------------
+# Normalizacion de unidades de medida (variantes -> forma canonica)
+# Se aplica como reemplazo de palabras completas.
+# ---------------------------------------------------------------------------
+NORMALIZACION_UNIDADES: Dict[str, str] = {
+    'GRS': 'G',
+    'GR': 'G',
+    'KGS': 'KG',
+    'LTS': 'LT',
+    'MLS': 'ML',
+    'PZS': 'PZ',
+    'PZA': 'PZ',
+}
 
 
 def normalizar_texto(texto: str) -> str:
@@ -24,6 +52,54 @@ def normalizar_texto(texto: str) -> str:
     # Colapsar espacios multiples
     texto = ' '.join(texto.split())
     return texto
+
+
+def expandir_abreviaturas(texto_normalizado: str) -> str:
+    """
+    Expandir abreviaturas de marca conocidas y normalizar unidades.
+
+    Se aplica SOLO al texto del XML antes de comparar con el catalogo ERP.
+    Reemplaza palabras completas (no subcadenas) para evitar falsos positivos.
+
+    Ejemplo:
+        'SALCHICHA PARA ASAR 800 GRS CHX' -> 'SALCHICHA PARA ASAR 800 G CHIMEX'
+
+    Args:
+        texto_normalizado: Texto ya procesado por normalizar_texto()
+
+    Returns:
+        Texto con abreviaturas expandidas y unidades normalizadas
+    """
+    if not texto_normalizado:
+        return texto_normalizado
+
+    palabras = texto_normalizado.split()
+    expandidas = []
+
+    for palabra in palabras:
+        # Primero: abreviaturas de marca (CHX -> CHIMEX)
+        if palabra in ABREVIATURAS_MARCA:
+            expansion = ABREVIATURAS_MARCA[palabra]
+            expandidas.append(expansion)
+            continue
+
+        # Segundo: unidades de medida (GRS -> G)
+        # Verificar si la palabra es una unidad pura o un numero+unidad
+        if palabra in NORMALIZACION_UNIDADES:
+            expandidas.append(NORMALIZACION_UNIDADES[palabra])
+            continue
+
+        # Numero pegado a unidad: "800GRS" -> "800G", "500ML" -> "500ML" (ya canonica)
+        match = re.match(r'^(\d+(?:\.\d+)?)(GRS|GR|KGS|LTS|MLS|PZS|PZA)$', palabra)
+        if match:
+            numero = match.group(1)
+            unidad = match.group(2)
+            expandidas.append(numero + NORMALIZACION_UNIDADES[unidad])
+            continue
+
+        expandidas.append(palabra)
+
+    return ' '.join(expandidas)
 
 
 class CacheProductos:

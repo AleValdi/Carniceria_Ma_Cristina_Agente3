@@ -8,7 +8,9 @@
 
 Automatiza el **registro manual** de facturas CFDI que no tienen remision asociada. El Agente 2 concilia facturas con remisiones Serie R; las que no matchean quedan como "Sin Remision" y las capturistas (MIREYA ALE, ABIGAIL RUIZ, etc.) las registran a mano. El Agente 3 reemplaza ese trabajo manual.
 
-**Flujo:** XML CFDI -> parsear -> buscar proveedor por RFC -> matchear conceptos con catalogo ERP -> INSERT Serie F en SAVRecC/SAVRecD
+**Flujo Ingreso:** XML CFDI -> parsear -> buscar proveedor por RFC -> matchear conceptos con catalogo ERP -> INSERT Serie F en SAVRecC/SAVRecD
+
+**Flujo Egreso (NC):** XML CFDI Egreso -> parsear -> extraer UUID factura relacionada -> buscar factura F -> determinar tipo NC -> INSERT SAVNCredP/Det/Rec
 
 ---
 
@@ -39,37 +41,47 @@ Agente3/
 │   ├── erp/
 │   │   ├── sav7_connector.py        # Reutilizado de Agente2
 │   │   ├── utils.py                 # numero_a_letra() extraido de Agente2
-│   │   ├── models.py               # ProductoERP, ProveedorERP, ResultadoRegistro, ResultadoMatchProducto
+│   │   ├── models.py               # ProductoERP, ProveedorERP, FacturaVinculada, ResultadoRegistro
 │   │   ├── proveedor_repo.py        # buscar_por_rfc() -> ProveedorERP
 │   │   ├── producto_repo.py         # cargar_catalogo() -> List[ProductoERP]
-│   │   └── registro_directo.py      # INSERT Serie F (cabecera + detalle)
+│   │   ├── registro_directo.py      # INSERT Serie F (cabecera + detalle)
+│   │   ├── registro_nc.py           # INSERT SAVNCredP/Det/Rec (Notas de Credito)
+│   │   └── factura_repo.py          # Buscar facturas F por UUID (para vincular NCs)
 │   ├── matching/
-│   │   ├── cache_productos.py       # Indices en memoria: por_nombre, por_codigo_sat
+│   │   ├── cache_productos.py       # Indices en memoria + expandir_abreviaturas() + normalizar_texto()
 │   │   ├── historial_compras.py     # Productos que el proveedor ha comprado antes + frecuencia
-│   │   └── producto_matcher.py      # Pipeline de matching de 5 pasos (CORE)
+│   │   └── producto_matcher.py      # Pipeline de matching de 5 pasos + expansion abreviaturas (CORE)
 │   └── reports/
 │       └── excel_generator.py       # Reporte Excel con 6 hojas
 ```
 
-**14 modulos totales.** 4 reutilizados de Agente2, 10 nuevos.
+**16 modulos totales.** 4 reutilizados de Agente2, 12 nuevos.
 
 ---
 
 ## Pipeline de Matching de Productos (CORE)
 
-El motor de matching esta en `src/matching/producto_matcher.py`. Cascada de 5 pasos, del mas preciso al mas general:
+El motor de matching esta en `src/matching/producto_matcher.py`. Cascada de pasos, del mas preciso al mas general:
 
 ```
+Paso 0: EXPANSION DE ABREVIATURAS (pre-procesamiento)
+  -> Expande abreviaturas de marca: CHX->CHIMEX, SRF->SAN RAFAEL, MDLZ->MONDELEZ
+  -> Normaliza unidades: GRS->G, KGS->KG, LTS->LT, MLS->ML, PZS/PZA->PZ
+  -> Se aplica SOLO al texto XML, no al catalogo ERP
+  -> Mejora scores: "SALCHICHA PAVO 500 GRS SRF" (75 pts) -> "SALCHICHA PAVO 500 G SAN RAFAEL" (98 pts)
+
 Paso 1: MATCH EXACTO por nombre normalizado
-  -> Busqueda O(1) en diccionario
+  -> Busqueda O(1) en diccionario (primero original, luego expandido)
   -> Si encuentra -> confianza 100%, nivel EXACTO
+  -> metodo_match = "exacto" o "exacto_expandido"
 
 Paso 2: HISTORIAL PROVEEDOR + token_sort_ratio
   -> Productos que el proveedor ha comprado antes (query SAVRecD/SAVRecC)
+  -> Usa nombre expandido (con abreviaturas resueltas)
   -> fuzz.token_sort_ratio >= 90 (UMBRAL_MATCH_PRODUCTO)
   -> nivel ALTA
 
-Paso 2.5: HISTORIAL PROVEEDOR + token_set_ratio + frecuencia (NUEVO)
+Paso 2.5: HISTORIAL PROVEEDOR + token_set_ratio + frecuencia
   -> Mismos productos del historial, pero con token_set_ratio (mas permisivo)
   -> Maneja nombres abreviados: "JALAPENO" vs "CHILE JALAPENO VERDE" -> score 100
   -> Desambiguacion por frecuencia de compra: acepta si freq mejor >= 2x segundo
@@ -131,6 +143,37 @@ score = fuzz.token_sort_ratio(texto_a, texto_b)   # Pasos 2, 3, 4
 score = fuzz.token_set_ratio(texto_a, texto_b)     # Paso 2.5
 ```
 
+### Expansion de abreviaturas de marca (Paso 0)
+
+Definido en `cache_productos.py`. Se ejecuta sobre el texto del XML antes de comparar con el catalogo.
+
+**Abreviaturas conocidas** (extraidas de 275 registros de NCs SIGMA en produccion):
+
+| Abreviatura | Marca completa | Fuente |
+|-------------|---------------|--------|
+| `CHX` | `CHIMEX` | XMLs NC SIGMA (embutidos) |
+| `SRF` | `SAN RAFAEL` | XMLs NC SIGMA (salchichas) |
+| `MDLZ` | `MONDELEZ` | XMLs NC SIGMA (Philadelphia) |
+| `TGM` | `TANGAMANGA` | XMLs NC SIGMA |
+
+**Normalizacion de unidades:**
+
+| Variante | Canonica |
+|----------|----------|
+| `GRS`, `GR` | `G` |
+| `KGS` | `KG` |
+| `LTS` | `LT` |
+| `MLS` | `ML` |
+| `PZS`, `PZA` | `PZ` |
+
+Soporta unidades pegadas a numeros: `800GRS` -> `800G`.
+
+**Impacto medido:**
+- `SALCHICHA PARA ASAR 800 GRS CHX` vs catalogo: 87 pts -> **95 pts** (+8)
+- `SALCHICHA PAVO 500 GRS SRF` vs catalogo: 75 pts -> **98 pts** (+23)
+
+Para agregar nuevas abreviaturas: editar `ABREVIATURAS_MARCA` en `cache_productos.py`.
+
 ---
 
 ## Patron INSERT Serie F (registro_directo.py)
@@ -182,6 +225,123 @@ Si `REGISTRAR_PARCIALES=true` (default) y >= 50% de conceptos matchean:
 1. **UUID unico**: `SELECT COUNT(*) FROM SAVRecC WHERE TimbradoFolioFiscal = ? AND Serie = 'F'`
 2. **Proveedor existe**: Busqueda por RFC en SAVProveedor
 3. **Transaccion atomica**: Todos los INSERTs en un solo `with cursor` (commit/rollback)
+
+---
+
+## Notas de Credito (registro_nc.py)
+
+### Tablas del Ecosistema NC
+
+Las notas de credito de proveedores en SAV7 **NO van en SAVRecC**. Tienen tablas separadas:
+
+| Tabla | Funcion | Equivalente |
+|-------|---------|-------------|
+| **SAVNCredP** | Encabezado NC proveedor | equiv. a SAVRecC |
+| **SAVNCredPDet** | Detalle/productos de la NC | equiv. a SAVRecD |
+| **SAVNCredPRec** | Vinculacion NC <-> Factura F | tabla puente |
+| **SAVNCredPTipo** | Catalogo de tipos de NC (4 tipos) | catalogo |
+
+### Tipos de NC
+
+| Tipo | Descripcion | Producto |
+|------|-------------|----------|
+| **DEVOLUCIONES** | Producto devuelto fisicamente | Productos reales matcheados |
+| **DESCUENTOS** | Descuento comercial / bonificacion | INSADM094 (generico, Servicio=1) |
+| **AJUSTES** | Ajustes varios | (no implementado aun) |
+| **GARANTIAS** | Producto en garantia | (no implementado aun) |
+
+### Determinacion del tipo NC
+
+```
+1. Si RFC emisor NO esta en RFC_PROVEEDORES_CON_DESCUENTO -> DEVOLUCIONES (siempre)
+2. Si RFC es SIGMA (SAC991222G1A) y claves SAT son genericas (01010101, 60010100, 84111506) -> DESCUENTOS
+3. Si RFC es SIGMA pero conceptos tienen productos reales -> DEVOLUCIONES
+```
+
+**Regla de negocio critica:** Solo SIGMA (RFC `SAC991222G1A`) puede tener DESCUENTOS.
+Todos los demas proveedores siempre son DEVOLUCIONES, independientemente de la ClaveProdServ.
+Esto se controla con la constante `RFC_PROVEEDORES_CON_DESCUENTO` en `registro_nc.py`.
+
+### Campos criticos SAVNCredP (encabezado)
+
+| Campo | Valor | Nota |
+|-------|-------|------|
+| `Serie` | `'NCF'` | Serie dominante en produccion |
+| `NCredito` | Secuencial | `MAX(NCredito)+1 WHERE Serie='NCF'` |
+| `Proveedor` | Clave ERP | De proveedor_repo |
+| `Concepto` | `"DEVOLUCION RECOC F-{NumRec} FACT: {Factura} FECHA: {dd/MMM/yyyy}"` | Truncar a 60 chars |
+| `Estatus` | `'No Aplicada'` | **Sin acreditacion automatica** |
+| `TipoNCredito` | `'DEVOLUCIONES'` o `'DESCUENTOS'` | Segun logica de determinacion |
+| `TimbradoFolioFiscal` | UUID del CFDI Egreso | **UPPERCASE** |
+| `NCreditoProv` | `factura_sat.folio` | Numero de NC del proveedor |
+| `Comprador` | `'AGENTE3_SAT'` | Identifica registros del agente |
+| `TotalAcredita` | Total NC | Para tracking |
+
+### Campos criticos SAVNCredPDet (detalle)
+
+**DESCUENTOS:** Una sola linea con producto generico INSADM094 (cantidad=1, costo=subtotal, Servicio=1)
+**DEVOLUCIONES:** Una linea por producto matcheado (igual que SAVRecD en registro_directo.py)
+
+### Campos criticos SAVNCredPRec (vinculacion)
+
+| Campo | Valor |
+|-------|-------|
+| `RecSerie` | `'F'` |
+| `RecNumRec` | NumRec de la factura vinculada |
+| `RecUUID` | UUID de la factura vinculada |
+| `RecAcredita` | `0` (no acreditado aun, se llenara al acreditar manualmente) |
+| `RecAcredito` | `NULL` (no se acredita automaticamente) |
+| `RecAcreditoCapturo` | `''` (vacio, se llenara al acreditar) |
+
+### Flujo de NC en el sistema
+
+```
+1. Proveedor emite CFDI tipo Egreso con UUID propio
+2. XML tiene nodo cfdi:CfdiRelacionados con UUID de factura original
+3. Agente 3 detecta TipoDeComprobante="E" -> flujo NC
+4. Busca factura F en SAVRecC por UUID relacionado
+5. Valida: factura existe, proveedor coincide, estatus='No Pagada'
+6. Determina tipo NC (DEVOLUCIONES o DESCUENTOS)
+7. Transaccion atomica:
+   a. INSERT SAVNCredP (encabezado con Estatus='No Aplicada')
+   b. INSERT SAVNCredPDet (detalle productos o generico)
+   c. INSERT SAVNCredPRec (vinculacion con factura F)
+   -- NO actualiza NCredito/Saldo en SAVRecC (decision del cliente)
+```
+
+### Relacion con SAVRecC
+
+La formula en SAVRecC es: `Saldo = Total - NCredito - Pagado`
+
+El campo `NCredito` de SAVRecC se actualiza **solo cuando se acredita manualmente** la NC (cambia Estatus de 'No Aplicada' a 'Acreditada'). El Agente 3 NO hace esta acreditacion.
+
+### Verificacion en BD
+
+```sql
+-- NCs creadas por Agente 3
+SELECT Serie, NCredito, Proveedor, ProveedorNombre, TipoNCredito,
+       Total, Estatus, TimbradoFolioFiscal, Comprador
+FROM SAVNCredP WHERE Comprador = 'AGENTE3_SAT';
+
+-- Vinculacion con facturas
+SELECT p.Serie, p.NCredito, p.TipoNCredito, p.Total as TotalNC,
+       r.RecSerie, r.RecNumRec, r.RecUUID, r.RecAcredita
+FROM SAVNCredP p
+INNER JOIN SAVNCredPRec r ON p.Serie = r.Serie AND p.NCredito = r.NCredito
+WHERE p.Comprador = 'AGENTE3_SAT';
+```
+
+### Reversion de prueba NC
+
+```sql
+-- 1. Borrar vinculacion
+DELETE FROM SAVNCredPRec WHERE Serie='NCF' AND NCredito = @nc_num;
+-- 2. Borrar detalle
+DELETE FROM SAVNCredPDet WHERE Serie='NCF' AND NCredito = @nc_num;
+-- 3. Borrar encabezado
+DELETE FROM SAVNCredP WHERE Serie='NCF' AND NCredito = @nc_num;
+-- No hace falta restaurar SAVRecC porque no se modifica NCredito/Saldo
+```
 
 ---
 
@@ -322,8 +482,15 @@ DELETE FROM SAVRecC WHERE Serie = 'F' AND NumRec = @numrec;
 ```
 
 ### Registros de prueba existentes en TEST
+
+**Facturas Ingreso (Serie F):**
 F-67768 (AGRODAK, $1,900, 4 lineas), F-67769 (QUIRINO, $3,240, 1 linea parcial), F-67770 (AGROCHILEROS, $946.40, 2 lineas).
 Creados con `Comprador='AGENTE3_SAT'`. Ver `RESULTADO_PRUEBAS.md` para detalles.
+
+**Notas de Credito (Serie NCF):**
+NCF-1176 (SIGMA, DEVOLUCIONES, $286.30, 2 lineas — matcheo 2/4 conceptos), NCF-1177 (SIGMA, DESCUENTOS, $836.00, INSADM094).
+Ambas vinculadas a F-68721 (copiada de PROD para test). Comprador='AGENTE3_SAT'.
+Equivalentes en produccion: NCF-1195 (DESCUENTOS) y NCF-1196 (DEVOLUCIONES).
 
 ### Siguiente NumRec disponible
 ```sql

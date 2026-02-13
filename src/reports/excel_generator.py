@@ -1,13 +1,14 @@
 """
 Generador de reportes Excel para resultados del Agente 3.
 
-Genera un Excel con 6 hojas:
+Genera un Excel con 7 hojas:
 1. Resumen Ejecutivo
-2. Registros Exitosos
-3. Registros Parciales
-4. No Registradas
-5. Conceptos Sin Match
-6. Detalle de Matching
+2. Registros Exitosos (Facturas Ingreso)
+3. Registros Parciales (Facturas Ingreso)
+4. NCs Registradas (Notas de Credito Egreso)
+5. No Registradas (Ingreso + Egreso fallidos)
+6. Conceptos Sin Match
+7. Detalle de Matching
 """
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +36,7 @@ FILL_EXITO = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='so
 FILL_PARCIAL = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
 FILL_ERROR = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
 FILL_RESUMEN = PatternFill(start_color='D9E2F3', end_color='D9E2F3', fill_type='solid')
+FILL_NC = PatternFill(start_color='B4C6E7', end_color='B4C6E7', fill_type='solid')  # Azul claro para NCs
 
 ALIGN_CENTER = Alignment(horizontal='center', vertical='center')
 ALIGN_LEFT = Alignment(horizontal='left', vertical='center', wrap_text=True)
@@ -80,31 +82,38 @@ class ExcelGenerator:
         # Hoja 1: Resumen Ejecutivo
         self._hoja_resumen(wb, resultados, dry_run, duracion_segundos)
 
-        # Hoja 2: Registros Exitosos
+        # Hoja 2: Registros Exitosos (solo Ingreso)
         exitosos = [
             (r, f) for r, f in zip(resultados, facturas)
-            if r.exito and not r.registro_parcial
+            if r.exito and not r.registro_parcial and not r.es_nota_credito
         ]
         self._hoja_registros(wb, "Exitosos", exitosos, FILL_EXITO)
 
-        # Hoja 3: Registros Parciales
+        # Hoja 3: Registros Parciales (solo Ingreso)
         parciales = [
             (r, f) for r, f in zip(resultados, facturas)
-            if r.exito and r.registro_parcial
+            if r.exito and r.registro_parcial and not r.es_nota_credito
         ]
         self._hoja_registros(wb, "Parciales", parciales, FILL_PARCIAL)
 
-        # Hoja 4: No Registradas
+        # Hoja 4: NCs Registradas (Notas de Credito exitosas)
+        ncs_exitosas = [
+            (r, f) for r, f in zip(resultados, facturas)
+            if r.exito and r.es_nota_credito
+        ]
+        self._hoja_ncs_registradas(wb, ncs_exitosas)
+
+        # Hoja 5: No Registradas (Ingreso + Egreso fallidos)
         fallidos = [
             (r, f) for r, f in zip(resultados, facturas)
             if not r.exito
         ]
         self._hoja_no_registradas(wb, fallidos)
 
-        # Hoja 5: Conceptos Sin Match
+        # Hoja 6: Conceptos Sin Match
         self._hoja_conceptos_sin_match(wb, resultados, facturas)
 
-        # Hoja 6: Detalle de Matching
+        # Hoja 7: Detalle de Matching
         self._hoja_detalle_matching(wb, todos_matches)
 
         # Remover hoja default vacia si existe
@@ -160,19 +169,40 @@ class ExcelGenerator:
         # Totales
         fila += 1
         total = len(resultados)
-        exitosos = sum(1 for r in resultados if r.exito and not r.registro_parcial)
-        parciales = sum(1 for r in resultados if r.exito and r.registro_parcial)
-        fallidos = sum(1 for r in resultados if not r.exito)
+
+        # Separar Ingreso vs NC
+        res_ingreso = [r for r in resultados if not r.es_nota_credito]
+        res_nc = [r for r in resultados if r.es_nota_credito]
+
+        exitosos_ing = sum(1 for r in res_ingreso if r.exito and not r.registro_parcial)
+        parciales_ing = sum(1 for r in res_ingreso if r.exito and r.registro_parcial)
+        fallidos_ing = sum(1 for r in res_ingreso if not r.exito)
+
+        nc_exitosas = sum(1 for r in res_nc if r.exito)
+        nc_fallidas = sum(1 for r in res_nc if not r.exito)
 
         ws.cell(row=fila, column=1, value="TOTALES").font = FONT_SUBTITULO
         fila += 1
 
         metricas = [
-            ("Facturas procesadas", total, None),
-            ("Registros exitosos", exitosos, FILL_EXITO),
-            ("Registros parciales", parciales, FILL_PARCIAL),
-            ("No registradas", fallidos, FILL_ERROR),
+            ("Total procesadas", total, None),
         ]
+        # Metricas Ingreso
+        if res_ingreso:
+            metricas.extend([
+                ("Facturas Ingreso", len(res_ingreso), None),
+                ("  Exitosas", exitosos_ing, FILL_EXITO),
+                ("  Parciales", parciales_ing, FILL_PARCIAL),
+                ("  Fallidas", fallidos_ing, FILL_ERROR),
+            ])
+        # Metricas NC
+        if res_nc:
+            metricas.extend([
+                ("Notas de Credito", len(res_nc), None),
+                ("  NC Exitosas", nc_exitosas, FILL_NC),
+                ("  NC Fallidas", nc_fallidas, FILL_ERROR),
+            ])
+
         for label, valor, fill in metricas:
             c1 = ws.cell(row=fila, column=1, value=label)
             c2 = ws.cell(row=fila, column=2, value=valor)
@@ -262,23 +292,64 @@ class ExcelGenerator:
 
         self._ajustar_anchos(ws)
 
+    def _hoja_ncs_registradas(
+        self,
+        wb: Workbook,
+        registros: List[Tuple[ResultadoRegistro, Factura]],
+    ):
+        """Hoja 4: Notas de Credito registradas exitosamente"""
+        ws = wb.create_sheet("NCs Registradas")
+
+        headers = [
+            "NC ERP", "UUID NC", "Tipo NC", "UUID Factura",
+            "Factura ERP", "RFC Emisor", "Nombre Emisor",
+            "Folio NC Prov", "Fecha Emision", "Subtotal", "IVA", "Total",
+            "Conceptos",
+        ]
+        self._escribir_headers(ws, headers)
+
+        for fila_idx, (resultado, factura) in enumerate(registros, start=2):
+            datos = [
+                resultado.numero_factura_erp or '',
+                resultado.factura_uuid,
+                resultado.tipo_nc,
+                resultado.factura_vinculada_uuid or '',
+                resultado.factura_vinculada_erp or '',
+                factura.rfc_emisor,
+                factura.nombre_emisor,
+                factura.folio or '',
+                factura.fecha_emision.strftime('%Y-%m-%d') if factura.fecha_emision else '',
+                float(factura.subtotal),
+                float(factura.iva_trasladado),
+                float(factura.total),
+                resultado.total_conceptos,
+            ]
+            for col, valor in enumerate(datos, start=1):
+                celda = ws.cell(row=fila_idx, column=col, value=valor)
+                celda.font = FONT_NORMAL
+                celda.border = BORDER_THIN
+
+        self._ajustar_anchos(ws)
+
     def _hoja_no_registradas(
         self,
         wb: Workbook,
         registros: List[Tuple[ResultadoRegistro, Factura]],
     ):
-        """Hoja 4: Facturas no registradas"""
+        """Hoja 5: Facturas y NCs no registradas"""
         ws = wb.create_sheet("No Registradas")
 
         headers = [
-            "UUID", "RFC Emisor", "Nombre Emisor", "Folio XML",
+            "Tipo", "UUID", "RFC Emisor", "Nombre Emisor", "Folio XML",
             "Fecha Emision", "Total", "Conceptos",
             "Error", "Mensaje",
         ]
         self._escribir_headers(ws, headers)
 
         for fila_idx, (resultado, factura) in enumerate(registros, start=2):
+            tipo_doc = "NC" if resultado.es_nota_credito else "Factura"
             datos = [
+                tipo_doc,
                 resultado.factura_uuid,
                 factura.rfc_emisor,
                 factura.nombre_emisor,
@@ -293,7 +364,7 @@ class ExcelGenerator:
                 celda = ws.cell(row=fila_idx, column=col, value=valor)
                 celda.font = FONT_NORMAL
                 celda.border = BORDER_THIN
-                if col >= 8:
+                if col >= 9:
                     celda.fill = FILL_ERROR
 
         self._ajustar_anchos(ws)

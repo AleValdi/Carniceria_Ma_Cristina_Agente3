@@ -55,6 +55,9 @@ class Settings:
     usuario_sistema: str = "AGENTE3_SAT"  # Usuario del sistema para campo Comprador
     sucursal: int = 5  # Sucursal por defecto
 
+    # Configuracion de Notas de Credito
+    producto_descuento: str = "INSADM094"  # Producto generico para NCs tipo DESCUENTOS
+
     # Configuracion de reportes
     nombre_reporte: str = "registro_directo_cfdi"
     incluir_fecha_en_reporte: bool = True
@@ -89,6 +92,7 @@ class Settings:
             log_level=os.getenv('LOG_LEVEL', 'INFO'),
             habilitar_token_set_historial=os.getenv('HABILITAR_TOKEN_SET_HISTORIAL', 'true').lower() == 'true',
             min_longitud_token_set=int(os.getenv('MIN_LONGITUD_TOKEN_SET', '5')),
+            producto_descuento=os.getenv('PRODUCTO_DESCUENTO', 'INSADM094'),
         )
 
 

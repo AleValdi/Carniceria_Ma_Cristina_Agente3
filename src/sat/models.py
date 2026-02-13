@@ -24,6 +24,13 @@ class MetodoPago(Enum):
 
 
 @dataclass
+class CfdiRelacionado:
+    """Documento CFDI relacionado (para Notas de Credito)"""
+    uuid: str              # UUID del CFDI relacionado (UPPERCASE)
+    tipo_relacion: str     # '01' = NC de los documentos relacionados
+
+
+@dataclass
 class Concepto:
     """Representa un concepto/producto en la factura"""
 
@@ -122,6 +129,9 @@ class Factura:
     fecha_procesamiento: Optional[datetime] = None
     estatus_procesamiento: str = "pendiente"
 
+    # CFDI Relacionados (para Notas de Credito tipo Egreso)
+    cfdi_relacionados: List[CfdiRelacionado] = field(default_factory=list)
+
     # Referencia a remisión (extraída del XML si está indicada)
     numero_remision_indicado: Optional[str] = None
 
@@ -168,6 +178,10 @@ class Factura:
             'total_conceptos': self.total_conceptos,
             'archivo_xml': self.archivo_xml,
             'conceptos': [c.to_dict() for c in self.conceptos],
+            'cfdi_relacionados': [
+                {'uuid': r.uuid, 'tipo_relacion': r.tipo_relacion}
+                for r in self.cfdi_relacionados
+            ],
         }
 
     def __str__(self) -> str:

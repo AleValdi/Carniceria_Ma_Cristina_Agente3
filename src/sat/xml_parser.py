@@ -10,7 +10,7 @@ from typing import Optional, List, Union, Tuple
 from lxml import etree
 from loguru import logger
 
-from .models import Factura, Concepto, TipoComprobante, MetodoPago
+from .models import Factura, Concepto, CfdiRelacionado, TipoComprobante, MetodoPago
 
 
 class CFDIParser:
@@ -168,6 +168,9 @@ class CFDIParser:
 
             # Extraer número de remisión si está indicado en la factura
             factura.numero_remision_indicado = self._extraer_numero_remision(factura)
+
+            # Parsear CFDI Relacionados (para Notas de Credito)
+            factura.cfdi_relacionados = self._parse_cfdi_relacionados(root, ns)
 
             return factura
 
@@ -331,6 +334,59 @@ class CFDIParser:
             return MetodoPago(metodo)
         except ValueError:
             return None
+
+    def _parse_cfdi_relacionados(self, root: etree._Element, ns: dict) -> List[CfdiRelacionado]:
+        """
+        Parsear nodo cfdi:CfdiRelacionados para Notas de Credito.
+
+        Estructura XML:
+        <cfdi:CfdiRelacionados TipoRelacion="01">
+            <cfdi:CfdiRelacionado UUID="562d9b11-e759-46fe-8d5f-ac3b76b0947d" />
+        </cfdi:CfdiRelacionados>
+
+        Returns:
+            Lista de CfdiRelacionado con UUID y TipoRelacion
+        """
+        relacionados = []
+
+        # Buscar nodo CfdiRelacionados
+        nodo_relacionados = root.find('cfdi:CfdiRelacionados', ns)
+        if nodo_relacionados is None:
+            # Intentar con namespace absoluto (CFDI 4.0 y 3.3)
+            nodo_relacionados = root.find(
+                './/{http://www.sat.gob.mx/cfd/4}CfdiRelacionados'
+            )
+            if nodo_relacionados is None:
+                nodo_relacionados = root.find(
+                    './/{http://www.sat.gob.mx/cfd/3}CfdiRelacionados'
+                )
+
+        if nodo_relacionados is None:
+            return relacionados
+
+        tipo_relacion = nodo_relacionados.get('TipoRelacion', '')
+
+        # Buscar cada CfdiRelacionado dentro del nodo
+        for hijo in nodo_relacionados:
+            if 'CfdiRelacionado' in hijo.tag:
+                uuid_rel = hijo.get('UUID', '')
+                if uuid_rel:
+                    relacionados.append(CfdiRelacionado(
+                        uuid=uuid_rel.upper(),
+                        tipo_relacion=tipo_relacion,
+                    ))
+                    logger.debug(
+                        f"CFDI Relacionado encontrado: UUID={uuid_rel.upper()}, "
+                        f"TipoRelacion={tipo_relacion}"
+                    )
+
+        if relacionados:
+            logger.info(
+                f"Encontrados {len(relacionados)} CFDI(s) relacionado(s) "
+                f"(TipoRelacion={tipo_relacion})"
+            )
+
+        return relacionados
 
     def _extraer_numero_remision(self, factura: Factura) -> Optional[str]:
         """

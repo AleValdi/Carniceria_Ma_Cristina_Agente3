@@ -14,7 +14,7 @@ from loguru import logger
 from config.settings import settings
 from src.sat.models import Concepto
 from src.erp.models import ProductoERP, ResultadoMatchProducto
-from src.matching.cache_productos import CacheProductos, normalizar_texto
+from src.matching.cache_productos import CacheProductos, normalizar_texto, expandir_abreviaturas
 from src.matching.historial_compras import HistorialCompras
 
 
@@ -60,14 +60,29 @@ class ProductoMatcher:
                 mensaje="Descripcion vacia en el XML"
             )
 
-        # Paso 1: Match exacto por nombre
+        # Paso 0: Expandir abreviaturas de marca y normalizar unidades
+        # Se aplica solo al texto XML, no al catalogo ERP
+        nombre_expandido = expandir_abreviaturas(nombre_normalizado)
+        if nombre_expandido != nombre_normalizado:
+            logger.debug(
+                f"Abreviaturas expandidas: '{nombre_normalizado}' -> '{nombre_expandido}'"
+            )
+
+        # Paso 1: Match exacto por nombre (intentar con original y expandido)
         resultado = self._match_exacto(concepto, nombre_normalizado)
         if resultado.matcheado:
             return resultado
 
+        # Si se expandieron abreviaturas, intentar match exacto con texto expandido
+        if nombre_expandido != nombre_normalizado:
+            resultado = self._match_exacto(concepto, nombre_expandido)
+            if resultado.matcheado:
+                resultado.metodo_match = "exacto_expandido"
+                return resultado
+
         # Paso 2: Historial del proveedor + fuzzy (token_sort_ratio)
         resultado = self._match_historial_proveedor(
-            concepto, nombre_normalizado, clave_proveedor
+            concepto, nombre_expandido, clave_proveedor
         )
         if resultado.matcheado:
             return resultado
@@ -75,18 +90,18 @@ class ProductoMatcher:
         # Paso 2.5: Historial del proveedor + token_set_ratio + frecuencia
         if settings.habilitar_token_set_historial:
             resultado = self._match_historial_token_set(
-                concepto, nombre_normalizado, clave_proveedor
+                concepto, nombre_expandido, clave_proveedor
             )
             if resultado.matcheado:
                 return resultado
 
         # Paso 3: Codigo SAT + fuzzy
-        resultado = self._match_codigo_sat(concepto, nombre_normalizado)
+        resultado = self._match_codigo_sat(concepto, nombre_expandido)
         if resultado.matcheado:
             return resultado
 
         # Paso 4: Catalogo completo + fuzzy (threshold mas estricto)
-        resultado = self._match_catalogo_completo(concepto, nombre_normalizado)
+        resultado = self._match_catalogo_completo(concepto, nombre_expandido)
         if resultado.matcheado:
             return resultado
 
