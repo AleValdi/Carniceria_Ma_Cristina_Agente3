@@ -184,7 +184,8 @@ class AttachmentManager:
                 where=where_clause,
             )
             params = [nombre_base] + where_params
-            self.connector.execute_custom_query(query, params)
+            with self.connector.db.get_cursor() as cursor:
+                cursor.execute(query, params)
             logger.info(f"  BD actualizada: {campo}={nombre_base}")
         except Exception as e:
             logger.warning(
