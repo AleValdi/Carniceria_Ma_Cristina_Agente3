@@ -184,7 +184,7 @@ class RegistradorDirecto:
             with self.connector.db.get_cursor() as cursor:
                 self._insertar_cabecera(
                     cursor, nuevo_num_rec, factura_sat, proveedor,
-                    matcheados, subtotal, iva, total
+                    matcheados, no_matcheados, subtotal, iva, total
                 )
                 self._insertar_detalles(
                     cursor, nuevo_num_rec, proveedor, matcheados
@@ -248,6 +248,7 @@ class RegistradorDirecto:
         factura_sat: Factura,
         proveedor: ProveedorERP,
         matcheados: List[ResultadoMatchProducto],
+        no_matcheados: List[ResultadoMatchProducto],
         subtotal: Decimal,
         iva: Decimal,
         total: Decimal,
@@ -311,7 +312,7 @@ class RegistradorDirecto:
             float(total),                            # Total
             Decimal('0'),                            # Pagado
             'CREDITO',                               # Referencia
-            f'REGISTRO DIRECTO CFDI: {factura_sat.uuid.upper()}',  # Comentario
+            self._construir_comentario(factura_sat, no_matcheados),  # Comentario
             'PESOS',                                 # Moneda
             Decimal('20.00'),                        # Paridad
             'Credito',                               # Tipo
@@ -346,6 +347,19 @@ class RegistradorDirecto:
 
         cursor.execute(query, params)
         logger.debug(f"Insertada cabecera F-{num_rec}")
+
+    def _construir_comentario(
+        self,
+        factura_sat: Factura,
+        no_matcheados: List[ResultadoMatchProducto],
+    ) -> str:
+        """Construir comentario para SAVRecC.Comentario.
+        Si hay conceptos sin match, los lista para referencia en el ERP."""
+        comentario = f'REGISTRO DIRECTO CFDI: {factura_sat.uuid.upper()}'
+        if no_matcheados:
+            faltantes = [m.concepto_xml.descripcion for m in no_matcheados]
+            comentario += f' | PARCIAL - Conceptos sin match: {", ".join(faltantes)}'
+        return comentario
 
     def _insertar_detalles(
         self,
