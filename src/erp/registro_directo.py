@@ -5,6 +5,7 @@ Crea registros Serie F en SAVRecC y SAVRecD directamente desde datos del XML.
 from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from loguru import logger
 
 from config.settings import settings, sav7_config
@@ -15,6 +16,7 @@ from src.erp.models import (
 )
 from src.erp.utils import numero_a_letra
 from src.sat.models import Factura
+from src.cfdi.attachment_manager import AttachmentManager
 
 
 SERIE_FACTURA = 'F'
@@ -189,6 +191,19 @@ class RegistradorDirecto:
                 )
 
             logger.info(f"Registro exitoso: F-{nuevo_num_rec}")
+
+            # Adjuntar XML a carpeta de red (no bloquea si falla)
+            if factura_sat.archivo_xml:
+                try:
+                    am = AttachmentManager(self.connector)
+                    am.adjuntar_factura(
+                        xml_origen=Path(factura_sat.archivo_xml),
+                        rfc_emisor=factura_sat.rfc_emisor,
+                        num_rec=nuevo_num_rec,
+                        fecha=factura_sat.fecha_emision,
+                    )
+                except Exception as e:
+                    logger.warning(f"No se pudo adjuntar XML de F-{nuevo_num_rec}: {e}")
 
             return ResultadoRegistro(
                 exito=True,

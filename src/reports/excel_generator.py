@@ -177,6 +177,7 @@ class ExcelGenerator:
         exitosos_ing = sum(1 for r in res_ingreso if r.exito and not r.registro_parcial)
         parciales_ing = sum(1 for r in res_ingreso if r.exito and r.registro_parcial)
         fallidos_ing = sum(1 for r in res_ingreso if not r.exito)
+        bloqueadas_ing = sum(1 for r in res_ingreso if not r.exito and r.error == 'REMISION_PENDIENTE')
 
         nc_exitosas = sum(1 for r in res_nc if r.exito)
         nc_fallidas = sum(1 for r in res_nc if not r.exito)
@@ -193,6 +194,7 @@ class ExcelGenerator:
                 ("Facturas Ingreso", len(res_ingreso), None),
                 ("  Exitosas", exitosos_ing, FILL_EXITO),
                 ("  Parciales", parciales_ing, FILL_PARCIAL),
+                ("  Bloqueadas (remision)", bloqueadas_ing, FILL_PARCIAL),
                 ("  Fallidas", fallidos_ing, FILL_ERROR),
             ])
         # Metricas NC
@@ -266,6 +268,7 @@ class ExcelGenerator:
             "Factura ERP", "UUID", "RFC Emisor", "Nombre Emisor",
             "Folio XML", "Fecha Emision", "Subtotal", "IVA", "Total",
             "Conceptos Total", "Conceptos Match", "% Match", "Metodo Pago",
+            "Advertencia Validacion",
         ]
         self._escribir_headers(ws, headers)
 
@@ -284,6 +287,7 @@ class ExcelGenerator:
                 resultado.conceptos_matcheados_count,
                 f"{resultado.porcentaje_matcheados:.0f}%",
                 factura.metodo_pago.value if factura.metodo_pago else '',
+                resultado.advertencia_validacion or '',
             ]
             for col, valor in enumerate(datos, start=1):
                 celda = ws.cell(row=fila_idx, column=col, value=valor)

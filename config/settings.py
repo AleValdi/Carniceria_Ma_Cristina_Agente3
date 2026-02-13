@@ -66,6 +66,24 @@ class Settings:
     habilitar_token_set_historial: bool = True  # Toggle para paso 2.5
     min_longitud_token_set: int = 5  # Min chars para activar token_set_ratio
 
+    # Validacion cruzada de remisiones pendientes
+    validar_remisiones_pendientes: bool = True  # Toggle para activar/desactivar
+    tolerancia_monto_validacion: float = 2.0    # % tolerancia para comparar montos
+    dias_rango_validacion: int = 15             # +/- dias para comparar fechas
+
+    # Adjuntos CFDI (copia de XML a carpeta de red SAV7)
+    cfdi_adjuntos_dir: Path = field(
+        default_factory=lambda: Path(os.getenv(
+            'CFDI_ADJUNTOS_DIR',
+            r'\\SERVERMC\Asesoft\SAV7-1\Recepciones CFDI'
+        ))
+    )
+    cfdi_adjuntos_habilitado: bool = field(
+        default_factory=lambda: os.getenv(
+            'CFDI_ADJUNTOS_HABILITADO', 'true'
+        ).lower() == 'true'
+    )
+
     # Configuracion de logging
     log_level: str = "INFO"
     log_format: str = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
@@ -93,6 +111,9 @@ class Settings:
             habilitar_token_set_historial=os.getenv('HABILITAR_TOKEN_SET_HISTORIAL', 'true').lower() == 'true',
             min_longitud_token_set=int(os.getenv('MIN_LONGITUD_TOKEN_SET', '5')),
             producto_descuento=os.getenv('PRODUCTO_DESCUENTO', 'INSADM094'),
+            validar_remisiones_pendientes=os.getenv('VALIDAR_REMISIONES_PENDIENTES', 'true').lower() == 'true',
+            tolerancia_monto_validacion=float(os.getenv('TOLERANCIA_MONTO_VALIDACION', '2.0')),
+            dias_rango_validacion=int(os.getenv('DIAS_RANGO_VALIDACION', '15')),
         )
 
 

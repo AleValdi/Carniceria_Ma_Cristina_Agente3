@@ -41,21 +41,24 @@ Agente3/
 │   ├── erp/
 │   │   ├── sav7_connector.py        # Reutilizado de Agente2
 │   │   ├── utils.py                 # numero_a_letra() extraido de Agente2
-│   │   ├── models.py               # ProductoERP, ProveedorERP, FacturaVinculada, ResultadoRegistro
+│   │   ├── models.py               # ProductoERP, ProveedorERP, FacturaVinculada, RemisionPendiente, ResultadoRegistro
 │   │   ├── proveedor_repo.py        # buscar_por_rfc() -> ProveedorERP
 │   │   ├── producto_repo.py         # cargar_catalogo() -> List[ProductoERP]
 │   │   ├── registro_directo.py      # INSERT Serie F (cabecera + detalle)
 │   │   ├── registro_nc.py           # INSERT SAVNCredP/Det/Rec (Notas de Credito)
-│   │   └── factura_repo.py          # Buscar facturas F por UUID (para vincular NCs)
+│   │   ├── factura_repo.py          # Buscar facturas F por UUID (para vincular NCs)
+│   │   └── validacion_cruzada.py    # Validar remisiones pendientes antes de registrar
+│   ├── cfdi/
+│   │   └── attachment_manager.py    # Copia XML a carpeta de red SAV7 + actualiza BD
 │   ├── matching/
 │   │   ├── cache_productos.py       # Indices en memoria + expandir_abreviaturas() + normalizar_texto()
 │   │   ├── historial_compras.py     # Productos que el proveedor ha comprado antes + frecuencia
 │   │   └── producto_matcher.py      # Pipeline de matching de 5 pasos + expansion abreviaturas (CORE)
 │   └── reports/
-│       └── excel_generator.py       # Reporte Excel con 6 hojas
+│       └── excel_generator.py       # Reporte Excel con 7 hojas
 ```
 
-**16 modulos totales.** 4 reutilizados de Agente2, 12 nuevos.
+**18 modulos totales.** 4 reutilizados de Agente2, 14 nuevos.
 
 ---
 
@@ -173,6 +176,100 @@ Soporta unidades pegadas a numeros: `800GRS` -> `800G`.
 - `SALCHICHA PAVO 500 GRS SRF` vs catalogo: 75 pts -> **98 pts** (+23)
 
 Para agregar nuevas abreviaturas: editar `ABREVIATURAS_MARCA` en `cache_productos.py`.
+
+---
+
+## Validacion Cruzada de Remisiones (validacion_cruzada.py)
+
+Antes de registrar una factura Serie F, el sistema verifica si el proveedor tiene remisiones pendientes (Serie R) en SAVRecC. Esto previene registros duplicados cuando el Agente 2 clasifica incorrectamente una factura como "Sin Remision".
+
+### Clasificacion de seguridad
+
+| Nivel | Condicion | Accion |
+|-------|-----------|--------|
+| **SEGURO** | Sin remisiones pendientes del proveedor | Registrar normalmente |
+| **REVISAR** | Hay remisiones pendientes pero ninguna con monto/fecha similar | Registrar con advertencia en reporte |
+| **BLOQUEAR** | Remision pendiente con monto ±2% Y fecha ±15 dias | NO registrar, reportar para revision manual |
+
+### Query de remisiones pendientes
+
+```sql
+SELECT Serie, NumRec, Fecha, Total, Estatus, Factura, Proveedor
+FROM SAVRecC
+WHERE Proveedor = ?
+  AND Serie = 'R'
+  AND Estatus != 'Consolidada'
+  AND Consolida = 0
+ORDER BY Fecha DESC
+```
+
+Doble filtro (`Estatus != 'Consolidada'` + `Consolida = 0`) como cinturon de seguridad.
+
+### Logica de clasificacion
+
+1. Si `VALIDAR_REMISIONES_PENDIENTES=false` → SEGURO (toggle desactivado)
+2. Si no hay remisiones pendientes → SEGURO
+3. Para cada remision: calcular `diferencia_monto_pct` y `diferencia_dias`
+4. Si mejor candidato tiene `dif_monto <= 2%` AND `dif_dias <= 15` → **BLOQUEAR**
+5. Si no → **REVISAR** (hay remisiones pero ninguna similar)
+
+### Settings
+
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `VALIDAR_REMISIONES_PENDIENTES` | `true` | Toggle para activar/desactivar |
+| `TOLERANCIA_MONTO_VALIDACION` | `2.0` | % tolerancia para comparar montos |
+| `DIAS_RANGO_VALIDACION` | `15` | +/- dias para comparar fechas |
+
+### Error code
+
+`REMISION_PENDIENTE` — La factura fue bloqueada porque existe una remision pendiente similar. Aparece en la hoja "No Registradas" del reporte Excel.
+
+### Punto de integracion
+
+Se ejecuta en `main.py` entre la busqueda de proveedor y el matching de productos. Si va a BLOQUEAR, evita el costo del fuzzy matching.
+
+---
+
+## Adjuntos CFDI (attachment_manager.py)
+
+Despues de registrar una factura F o una NC NCF, el sistema copia el XML a la carpeta de red compartida de SAV7 y actualiza los campos de factura electronica en la BD. Replica el comportamiento del AttachmentManager del Agente 2.
+
+### Carpeta de destino
+
+`\\SERVERMC\Asesoft\SAV7-1\Recepciones CFDI` (configurable via `CFDI_ADJUNTOS_DIR`)
+
+### Formatos de nombre
+
+| Tipo | Formato | Ejemplo |
+|------|---------|---------|
+| Factura F | `{RFC}_REC_F{NumRec:06d}_{YYYYMMDD}` | `BBO911129DC4_REC_F068908_20260212` |
+| NC NCF | `{RFC}_RECNC_NCF{NCredito:06d}_{YYYYMMDD}` | `SAC991222G1A_RECNC_NCF001197_20260211` |
+
+### Campos actualizados en BD
+
+**SAVRecC (Facturas F):**
+- `FacturaElectronica` = nombre base (sin extension)
+- `FacturaElectronicaExiste` = 1
+- `FacturaElectronicaValida` = 1
+- `FacturaElectronicaEstatus` = 'Vigente'
+
+**SAVNCredP (NCs NCF):**
+- `NCreditoElectronica` = nombre base (sin extension)
+- `NCreditoElectronicaExiste` = 1
+- `NCreditoElectronicaValida` = 1
+- `NCreditoElectronicaEstatus` = 'Vigente'
+
+### Patron no-bloqueante
+
+Si la copia o actualizacion falla, se loguea warning pero **no se revierte el registro**. La factura F o NC se crea correctamente aunque el adjunto no se copie.
+
+### Settings
+
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `CFDI_ADJUNTOS_DIR` | `\\SERVERMC\Asesoft\SAV7-1\Recepciones CFDI` | Carpeta de red destino |
+| `CFDI_ADJUNTOS_HABILITADO` | `true` | Toggle para activar/desactivar copia |
 
 ---
 

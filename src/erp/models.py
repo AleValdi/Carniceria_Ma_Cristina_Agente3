@@ -82,6 +82,30 @@ class FacturaVinculada:
 
 
 @dataclass
+class RemisionPendiente:
+    """Remision Serie R pendiente encontrada en SAVRecC"""
+    serie: str              # 'R'
+    num_rec: int            # NumRec
+    fecha: datetime         # Fecha de la remision
+    total: float            # Total de la remision
+    estatus: str            # 'No Pagada', 'RECIBIDA', etc.
+    factura: str            # Campo Factura (folio del proveedor)
+    proveedor: str          # Clave proveedor
+    diferencia_monto_pct: float = 0.0  # % diferencia vs factura CFDI
+    diferencia_dias: int = 0           # Dias de diferencia vs factura CFDI
+
+
+@dataclass
+class ResultadoValidacion:
+    """Resultado de validacion cruzada contra remisiones pendientes"""
+    clasificacion: str  # 'SEGURO', 'REVISAR', 'BLOQUEAR'
+    total_remisiones_pendientes: int = 0
+    remision_similar: Optional[RemisionPendiente] = None  # Mejor candidato si BLOQUEAR
+    remisiones_pendientes: List[RemisionPendiente] = field(default_factory=list)
+    mensaje: str = ""
+
+
+@dataclass
 class ResultadoRegistro:
     """Resultado de registrar una factura o nota de credito en el ERP"""
     exito: bool
@@ -100,6 +124,9 @@ class ResultadoRegistro:
     tipo_nc: str = ""                          # DEVOLUCIONES / DESCUENTOS
     factura_vinculada_uuid: Optional[str] = None  # UUID de la factura F original
     factura_vinculada_erp: Optional[str] = None   # "F-XXXXX" de la factura vinculada
+
+    # Campo para validacion cruzada (backward compatible)
+    advertencia_validacion: Optional[str] = None
 
     @property
     def porcentaje_matcheados(self) -> float:

@@ -9,6 +9,7 @@ Las NCs se crean con Estatus='No Aplicada'. La acreditacion
 from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from loguru import logger
 
 from config.settings import settings, sav7_config
@@ -20,6 +21,7 @@ from src.erp.models import (
 )
 from src.erp.utils import numero_a_letra
 from src.sat.models import Factura
+from src.cfdi.attachment_manager import AttachmentManager
 
 
 SERIE_NC = 'NCF'
@@ -282,6 +284,19 @@ class RegistradorNC:
                 )
 
             logger.info(f"Registro NC exitoso: NCF-{nuevo_ncredito}")
+
+            # Adjuntar XML a carpeta de red (no bloquea si falla)
+            if factura_sat.archivo_xml:
+                try:
+                    am = AttachmentManager(self.connector)
+                    am.adjuntar_nc(
+                        xml_origen=Path(factura_sat.archivo_xml),
+                        rfc_emisor=factura_sat.rfc_emisor,
+                        ncredito=nuevo_ncredito,
+                        fecha=factura_sat.fecha_emision,
+                    )
+                except Exception as e:
+                    logger.warning(f"No se pudo adjuntar XML de NCF-{nuevo_ncredito}: {e}")
 
             return ResultadoRegistro(
                 exito=True,

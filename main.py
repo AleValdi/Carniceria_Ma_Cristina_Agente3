@@ -27,7 +27,8 @@ from src.erp.producto_repo import ProductoRepository
 from src.erp.registro_directo import RegistradorDirecto
 from src.erp.registro_nc import RegistradorNC
 from src.erp.factura_repo import FacturaRepository
-from src.erp.models import ResultadoRegistro, ResultadoMatchProducto
+from src.erp.models import ResultadoRegistro, ResultadoMatchProducto, ResultadoValidacion
+from src.erp.validacion_cruzada import ValidadorRemisiones
 from src.matching.cache_productos import CacheProductos
 from src.matching.historial_compras import HistorialCompras
 from src.matching.producto_matcher import ProductoMatcher
@@ -155,6 +156,7 @@ def procesar_factura(
     matcher: ProductoMatcher,
     registrador: RegistradorDirecto,
     registrador_nc: RegistradorNC,
+    validador: ValidadorRemisiones,
     dry_run: bool = False,
 ) -> Tuple[ResultadoRegistro, List[ResultadoMatchProducto]]:
     """
@@ -202,11 +204,44 @@ def procesar_factura(
             error="PROVEEDOR_NO_ENCONTRADO"
         ), []
 
+    # --- Validacion cruzada: verificar remisiones pendientes ---
+    validacion = validador.validar_antes_de_registro(factura, proveedor)
+
+    if validacion.clasificacion == 'BLOQUEAR':
+        r_sim = validacion.remision_similar
+        logger.warning(
+            f"  BLOQUEADA: Remision pendiente R-{r_sim.num_rec} "
+            f"(${r_sim.total:,.2f}, dif {r_sim.diferencia_monto_pct:.1f}%, "
+            f"{r_sim.diferencia_dias} dias)"
+        )
+        return ResultadoRegistro(
+            exito=False,
+            factura_uuid=uuid,
+            total_conceptos=len(factura.conceptos),
+            mensaje=(
+                f"Remision pendiente similar: R-{r_sim.num_rec} "
+                f"(${r_sim.total:,.2f}, dif {r_sim.diferencia_monto_pct:.1f}%, "
+                f"{r_sim.diferencia_dias} dias). "
+                f"Total pendientes: {validacion.total_remisiones_pendientes}"
+            ),
+            error="REMISION_PENDIENTE"
+        ), []
+    elif validacion.clasificacion == 'REVISAR':
+        logger.info(
+            f"  AVISO: {validacion.total_remisiones_pendientes} remisiones "
+            f"pendientes (ninguna similar en monto/fecha)"
+        )
+    # SEGURO -> continua normalmente
+
     # Matchear conceptos
     matches = matcher.matchear_lote(factura.conceptos, proveedor.clave)
 
     # Registrar en ERP
     resultado = registrador.registrar(factura, proveedor, matches, dry_run=dry_run)
+
+    # Agregar advertencia de validacion si REVISAR
+    if validacion.clasificacion == 'REVISAR':
+        resultado.advertencia_validacion = validacion.mensaje
 
     return resultado, matches
 
@@ -328,6 +363,7 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
     registrador = RegistradorDirecto(connector)
     factura_repo = FacturaRepository(connector)
     registrador_nc = RegistradorNC(connector, factura_repo)
+    validador = ValidadorRemisiones(connector)
 
     # Cargar catalogo de productos
     logger.info("Cargando catalogo de productos...")
@@ -372,7 +408,8 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
         logger.info(f"  Total: ${float(factura.total):,.2f} | Conceptos: {len(factura.conceptos)}")
 
         resultado, matches = procesar_factura(
-            factura, proveedor_repo, matcher, registrador, registrador_nc, dry_run
+            factura, proveedor_repo, matcher, registrador, registrador_nc,
+            validador, dry_run
         )
         resultados.append(resultado)
         todos_matches.append((factura, matches))
