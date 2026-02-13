@@ -396,6 +396,9 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
         connector.close()
         return
 
+    # Ordenar: Ingresos primero, Egresos despues (NCs necesitan que su factura F ya exista)
+    facturas.sort(key=lambda f: (0 if f.tipo_comprobante == 'I' else 1))
+
     logger.info(f"Facturas a procesar: {len(facturas)}")
 
     # Procesar cada factura
