@@ -273,7 +273,7 @@ class RegistradorNC:
             with self.connector.db.get_cursor() as cursor:
                 self._insertar_cabecera_nc(
                     cursor, nuevo_ncredito, factura_sat, proveedor,
-                    factura_vinculada, tipo_nc
+                    factura_vinculada, tipo_nc, no_matcheados
                 )
                 self._insertar_detalles_nc(
                     cursor, nuevo_ncredito, factura_sat, proveedor,
@@ -351,6 +351,7 @@ class RegistradorNC:
         proveedor: ProveedorERP,
         factura_vinculada: FacturaVinculada,
         tipo_nc: str,
+        no_matcheados: Optional[List[ResultadoMatchProducto]] = None,
     ):
         """Insertar encabezado de NC en SAVNCredP"""
 
@@ -411,7 +412,8 @@ class RegistradorNC:
                 TotalAcredita, AsignacionCuentas,
                 ExportadoConsolida, ExportadoTemp, Importado,
                 RetencionIVA, RetencionISR,
-                NCreditoFecha, NCreditoProv
+                NCreditoFecha, NCreditoProv,
+                Comentario
             ) VALUES (
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
@@ -430,7 +432,8 @@ class RegistradorNC:
                 ?, ?,
                 ?, ?, ?,
                 ?, ?,
-                ?, ?
+                ?, ?,
+                ?
             )
         """
 
@@ -488,6 +491,7 @@ class RegistradorNC:
             0,                                           # RetencionISR
             factura_sat.fecha_emision,                   # NCreditoFecha (fecha del CFDI Egreso)
             (factura_sat.folio or '')[:30],               # NCreditoProv (folio del proveedor)
+            self._construir_comentario_nc(factura_sat, no_matcheados),  # Comentario
         )
 
         cursor.execute(query, params)
@@ -659,3 +663,26 @@ class RegistradorNC:
             f"Insertada vinculacion: NCF-{ncredito_num} -> "
             f"F-{factura_vinculada.num_rec}"
         )
+
+    def _construir_comentario_nc(
+        self,
+        factura_sat: Factura,
+        no_matcheados: Optional[List[ResultadoMatchProducto]] = None,
+    ) -> str:
+        """Construir comentario para SAVNCredP.Comentario.
+
+        Incluye UUID de la NC y, si hay conceptos sin match, los lista
+        con cantidad para que las capturistas puedan registrarlos
+        manualmente desde el ERP.
+
+        NOTA: SAVNCredP.Comentario es varchar(150), se trunca.
+        """
+        comentario = f'NC CFDI: {factura_sat.uuid.upper()}'
+        if no_matcheados:
+            faltantes = []
+            for m in no_matcheados:
+                c = m.concepto_xml
+                cant = int(c.cantidad) if c.cantidad == int(c.cantidad) else float(c.cantidad)
+                faltantes.append(f'{c.descripcion} ({cant} {c.unidad or "PZ"})')
+            comentario += f' | PARCIAL - Sin match: {"; ".join(faltantes)}'
+        return comentario[:150]

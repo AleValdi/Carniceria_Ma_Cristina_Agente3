@@ -354,11 +354,16 @@ class RegistradorDirecto:
         no_matcheados: List[ResultadoMatchProducto],
     ) -> str:
         """Construir comentario para SAVRecC.Comentario.
-        Si hay conceptos sin match, los lista para referencia en el ERP."""
+        Si hay conceptos sin match, los lista con cantidad para que las
+        capturistas puedan registrarlos manualmente desde el ERP."""
         comentario = f'REGISTRO DIRECTO CFDI: {factura_sat.uuid.upper()}'
         if no_matcheados:
-            faltantes = [m.concepto_xml.descripcion for m in no_matcheados]
-            comentario += f' | PARCIAL - Conceptos sin match: {", ".join(faltantes)}'
+            faltantes = []
+            for m in no_matcheados:
+                c = m.concepto_xml
+                cant = int(c.cantidad) if c.cantidad == int(c.cantidad) else float(c.cantidad)
+                faltantes.append(f'{c.descripcion} ({cant} {c.unidad or "PZ"})')
+            comentario += f' | PARCIAL - Sin match: {"; ".join(faltantes)}'
         return comentario
 
     def _insertar_detalles(
