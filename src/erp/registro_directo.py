@@ -54,14 +54,15 @@ class RegistradorDirecto:
         return cuenta > 0
 
     def obtener_siguiente_numrec(self) -> int:
-        """Obtener el siguiente NumRec disponible para Serie F"""
+        """Obtener el siguiente NumRec disponible para Serie F (dry-run)"""
         query = f"""
             SELECT ISNULL(MAX(NumRec), 0) + 1 as SiguienteNum
             FROM {self.config.tabla_recepciones}
             WHERE Serie = ?
         """
         resultados = self.connector.execute_custom_query(query, (SERIE_FACTURA,))
-        return resultados[0]['SiguienteNum'] if resultados else 1
+        siguiente = resultados[0]['SiguienteNum'] if resultados else 1
+        return max(siguiente, settings.numrec_rango_minimo)
 
     def registrar(
         self,
@@ -252,6 +253,10 @@ class RegistradorDirecto:
         la transaccion termine (commit o rollback). Esto previene que
         otro proceso (Agente 2, SAV7 manual) obtenga el mismo NumRec.
 
+        Ademas, aplica rango reservado (settings.numrec_rango_minimo)
+        para que el Agente 3 use numeros >= 900000, separados del rango
+        normal del ERP (actualmente ~68,000).
+
         IMPORTANTE: Este metodo DEBE ejecutarse dentro de un
         'with self.connector.db.get_cursor() as cursor' que tambien
         contenga los INSERTs posteriores.
@@ -263,7 +268,8 @@ class RegistradorDirecto:
         """
         cursor.execute(query, (SERIE_FACTURA,))
         row = cursor.fetchone()
-        return row[0] if row else 1
+        siguiente = row[0] if row else 1
+        return max(siguiente, settings.numrec_rango_minimo)
 
     def _insertar_cabecera(
         self,

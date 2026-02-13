@@ -117,14 +117,15 @@ class RegistradorNC:
         return cuenta > 0
 
     def obtener_siguiente_ncredito(self) -> int:
-        """Obtener el siguiente NCredito disponible para Serie NCF"""
+        """Obtener el siguiente NCredito disponible para Serie NCF (dry-run)"""
         query = """
             SELECT ISNULL(MAX(NCredito), 0) + 1 as SiguienteNum
             FROM SAVNCredP
             WHERE Serie = ?
         """
         resultados = self.connector.execute_custom_query(query, (SERIE_NC,))
-        return resultados[0]['SiguienteNum'] if resultados else 1
+        siguiente = resultados[0]['SiguienteNum'] if resultados else 1
+        return max(siguiente, settings.ncredito_rango_minimo)
 
     def registrar(
         self,
@@ -354,6 +355,9 @@ class RegistradorNC:
         la transaccion termine (commit o rollback). Esto previene que
         otro proceso obtenga el mismo NCredito.
 
+        Ademas, aplica rango reservado (settings.ncredito_rango_minimo)
+        para separar los numeros del Agente 3 del rango del ERP manual.
+
         IMPORTANTE: Este metodo DEBE ejecutarse dentro de un
         'with self.connector.db.get_cursor() as cursor' que tambien
         contenga los INSERTs posteriores.
@@ -365,7 +369,8 @@ class RegistradorNC:
         """
         cursor.execute(query, (SERIE_NC,))
         row = cursor.fetchone()
-        return row[0] if row else 1
+        siguiente = row[0] if row else 1
+        return max(siguiente, settings.ncredito_rango_minimo)
 
     def _insertar_cabecera_nc(
         self,

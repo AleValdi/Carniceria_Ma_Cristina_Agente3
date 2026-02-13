@@ -55,6 +55,12 @@ class Settings:
     usuario_sistema: str = "AGENTE3_SAT"  # Usuario del sistema para campo Comprador
     sucursal: int = 5  # Sucursal por defecto
 
+    # Rangos reservados para evitar colision con ERP manual / Agente 2
+    # El ERP (SAV7/Asesoft) y Agente 2 usan NumRec < 900000.
+    # Agente 3 usa NumRec >= 900000 para que nunca colisionen.
+    numrec_rango_minimo: int = 900000
+    ncredito_rango_minimo: int = 50000
+
     # Configuracion de Notas de Credito
     producto_descuento: str = "INSADM094"  # Producto generico para NCs tipo DESCUENTOS
 
@@ -119,6 +125,8 @@ class Settings:
             validar_remisiones_pendientes=os.getenv('VALIDAR_REMISIONES_PENDIENTES', 'true').lower() == 'true',
             tolerancia_monto_validacion=float(os.getenv('TOLERANCIA_MONTO_VALIDACION', '2.0')),
             dias_rango_validacion=int(os.getenv('DIAS_RANGO_VALIDACION', '15')),
+            numrec_rango_minimo=int(os.getenv('NUMREC_RANGO_MINIMO', '900000')),
+            ncredito_rango_minimo=int(os.getenv('NCREDITO_RANGO_MINIMO', '50000')),
         )
 
 
