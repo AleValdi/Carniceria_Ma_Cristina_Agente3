@@ -83,6 +83,11 @@ class Settings:
             'CFDI_ADJUNTOS_HABILITADO', 'true'
         ).lower() == 'true'
     )
+    cfdi_generar_pdf: bool = field(
+        default_factory=lambda: os.getenv(
+            'CFDI_GENERAR_PDF', 'true'
+        ).lower() == 'true'
+    )
 
     # Configuracion de logging
     log_level: str = "INFO"

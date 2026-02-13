@@ -5,6 +5,9 @@ pyodbc>=4.0.39
 # XML/CFDI
 lxml>=4.9.0
 
+# PDF desde CFDI (opcional - si no esta instalado, se deshabilita generacion PDF)
+satcfdi>=4.4.0
+
 # Reportes
 openpyxl>=3.1.0
 

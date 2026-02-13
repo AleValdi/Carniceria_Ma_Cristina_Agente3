@@ -20,6 +20,7 @@ from loguru import logger
 
 from config.settings import settings
 from src.erp.sav7_connector import SAV7Connector
+from src.cfdi.pdf_generator import PDFGenerator
 
 
 class AttachmentManager:
@@ -28,6 +29,7 @@ class AttachmentManager:
     def __init__(self, connector: SAV7Connector):
         self.connector = connector
         self.directorio = settings.cfdi_adjuntos_dir
+        self.pdf_generator = PDFGenerator()
 
     def adjuntar_factura(
         self,
@@ -154,6 +156,17 @@ class AttachmentManager:
         except Exception as e:
             logger.warning(f"Error al copiar XML a {destino_xml}: {e}")
             return False
+
+        # Generar y copiar PDF (no-bloqueante)
+        if settings.cfdi_generar_pdf and self.pdf_generator.disponible:
+            destino_pdf = self.directorio / f"{nombre_base}.pdf"
+            try:
+                if self.pdf_generator.generar_desde_xml(xml_origen, destino_pdf):
+                    logger.info(f"  PDF generado: {destino_pdf.name}")
+                else:
+                    logger.warning(f"No se pudo generar PDF para {nombre_base}")
+            except Exception as e:
+                logger.warning(f"Error generando PDF para {nombre_base}: {e}")
 
         # Actualizar campos en BD
         # Campos: {campo}, {campo}Existe, {campo}Valida, {campo}Estatus
