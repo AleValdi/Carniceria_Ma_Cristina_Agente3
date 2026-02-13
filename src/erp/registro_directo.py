@@ -151,13 +151,6 @@ class RegistradorDirecto:
             )
 
         try:
-            nuevo_num_rec = self.obtener_siguiente_numrec()
-
-            logger.info(
-                f"Registrando factura: UUID {uuid[:12]}... -> F-{nuevo_num_rec} "
-                f"({conceptos_ok}/{total_conceptos} conceptos)"
-            )
-
             # Calcular totales solo de los conceptos matcheados
             subtotal_matcheados = sum(
                 m.concepto_xml.importe for m in matcheados
@@ -180,8 +173,18 @@ class RegistradorDirecto:
                 iva = factura_sat.iva_trasladado
                 total = factura_sat.total
 
-            # Ejecutar en transaccion
+            # Ejecutar en transaccion unica: SELECT MAX+1 con lock + INSERTs
+            # El UPDLOCK/HOLDLOCK previene que otro proceso obtenga el mismo
+            # NumRec entre el SELECT y el INSERT (race condition detectada
+            # en produccion con F-68949).
             with self.connector.db.get_cursor() as cursor:
+                nuevo_num_rec = self._obtener_siguiente_numrec_con_lock(cursor)
+
+                logger.info(
+                    f"Registrando factura: UUID {uuid[:12]}... -> F-{nuevo_num_rec} "
+                    f"({conceptos_ok}/{total_conceptos} conceptos)"
+                )
+
                 self._insertar_cabecera(
                     cursor, nuevo_num_rec, factura_sat, proveedor,
                     matcheados, no_matcheados, subtotal, iva, total
@@ -240,6 +243,27 @@ class RegistradorDirecto:
                 mensaje=f"Error en registro: {str(e)}",
                 error=str(e)
             )
+
+    def _obtener_siguiente_numrec_con_lock(self, cursor) -> int:
+        """
+        Obtener siguiente NumRec DENTRO de la transaccion actual con lock.
+
+        Usa UPDLOCK + HOLDLOCK para bloquear las filas leidas hasta que
+        la transaccion termine (commit o rollback). Esto previene que
+        otro proceso (Agente 2, SAV7 manual) obtenga el mismo NumRec.
+
+        IMPORTANTE: Este metodo DEBE ejecutarse dentro de un
+        'with self.connector.db.get_cursor() as cursor' que tambien
+        contenga los INSERTs posteriores.
+        """
+        query = f"""
+            SELECT ISNULL(MAX(NumRec), 0) + 1 as SiguienteNum
+            FROM {self.config.tabla_recepciones} WITH (UPDLOCK, HOLDLOCK)
+            WHERE Serie = ?
+        """
+        cursor.execute(query, (SERIE_FACTURA,))
+        row = cursor.fetchone()
+        return row[0] if row else 1
 
     def _insertar_cabecera(
         self,

@@ -262,15 +262,18 @@ class RegistradorNC:
             )
 
         try:
-            nuevo_ncredito = self.obtener_siguiente_ncredito()
-
-            logger.info(
-                f"Registrando NC: UUID {uuid[:12]}... -> NCF-{nuevo_ncredito} "
-                f"({tipo_nc}) vinculada a F-{factura_vinculada.num_rec}"
-            )
-
-            # Ejecutar en transaccion
+            # Ejecutar en transaccion unica: SELECT MAX+1 con lock + INSERTs
+            # El UPDLOCK/HOLDLOCK previene que otro proceso obtenga el mismo
+            # NCredito entre el SELECT y el INSERT (misma proteccion que
+            # registro_directo.py para NumRec).
             with self.connector.db.get_cursor() as cursor:
+                nuevo_ncredito = self._obtener_siguiente_ncredito_con_lock(cursor)
+
+                logger.info(
+                    f"Registrando NC: UUID {uuid[:12]}... -> NCF-{nuevo_ncredito} "
+                    f"({tipo_nc}) vinculada a F-{factura_vinculada.num_rec}"
+                )
+
                 self._insertar_cabecera_nc(
                     cursor, nuevo_ncredito, factura_sat, proveedor,
                     factura_vinculada, tipo_nc, no_matcheados
@@ -342,6 +345,27 @@ class RegistradorNC:
                 mensaje=f"Error en registro NC: {str(e)}",
                 error=str(e)
             )
+
+    def _obtener_siguiente_ncredito_con_lock(self, cursor) -> int:
+        """
+        Obtener siguiente NCredito DENTRO de la transaccion actual con lock.
+
+        Usa UPDLOCK + HOLDLOCK para bloquear las filas leidas hasta que
+        la transaccion termine (commit o rollback). Esto previene que
+        otro proceso obtenga el mismo NCredito.
+
+        IMPORTANTE: Este metodo DEBE ejecutarse dentro de un
+        'with self.connector.db.get_cursor() as cursor' que tambien
+        contenga los INSERTs posteriores.
+        """
+        query = """
+            SELECT ISNULL(MAX(NCredito), 0) + 1 as SiguienteNum
+            FROM SAVNCredP WITH (UPDLOCK, HOLDLOCK)
+            WHERE Serie = ?
+        """
+        cursor.execute(query, (SERIE_NC,))
+        row = cursor.fetchone()
+        return row[0] if row else 1
 
     def _insertar_cabecera_nc(
         self,
