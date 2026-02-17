@@ -116,6 +116,40 @@ class RegistradorNC:
         cuenta = resultados[0]['cuenta'] if resultados else 0
         return cuenta > 0
 
+    def verificar_nc_duplicada(self, factura_sat: 'Factura') -> bool:
+        """
+        Verificar si una NC ya existe en SAVNCredP por RFC + NCreditoProv + Total.
+        Complementa verificar_uuid_nc_existe() cuando TimbradoFolioFiscal va vacio.
+
+        Args:
+            factura_sat: Factura CFDI Egreso parseada del XML
+
+        Returns:
+            True si ya existe una NC con los mismos datos, False si no
+        """
+        folio = factura_sat.folio or ''
+        if not folio:
+            return False  # Sin folio no se puede validar
+
+        query = """
+            SELECT COUNT(*) as cuenta
+            FROM SAVNCredP
+            WHERE Serie = ?
+              AND RFC = ?
+              AND NCreditoProv = ?
+              AND Total = ?
+        """
+        resultados = self.connector.execute_custom_query(
+            query, (
+                SERIE_NC,
+                factura_sat.rfc_emisor,
+                folio,
+                float(factura_sat.total),
+            )
+        )
+        cuenta = resultados[0]['cuenta'] if resultados else 0
+        return cuenta > 0
+
     def obtener_siguiente_ncredito(self) -> int:
         """Obtener el siguiente NCredito disponible para Serie NCF (dry-run)"""
         query = """
@@ -222,6 +256,25 @@ class RegistradorNC:
                 error="UUID_NC_DUPLICADO"
             )
 
+        # 5b. Verificar duplicado por RFC + Folio + Total
+        # (complementa UUID cuando TimbradoFolioFiscal va vacio)
+        if self.verificar_nc_duplicada(factura_sat):
+            folio = factura_sat.folio or ''
+            return ResultadoRegistro(
+                exito=False,
+                factura_uuid=uuid,
+                total_conceptos=total_conceptos,
+                es_nota_credito=True,
+                tipo_nc=tipo_nc,
+                factura_vinculada_uuid=uuid_factura_relacionada,
+                factura_vinculada_erp=f"F-{factura_vinculada.num_rec}",
+                mensaje=(
+                    f"NC duplicada: RFC={factura_sat.rfc_emisor}, "
+                    f"Folio={folio}, Total=${float(factura_sat.total):,.2f}"
+                ),
+                error="NC_DUPLICADA"
+            )
+
         # Preparar datos de registro segun tipo
         matcheados = [m for m in matches if m.matcheado]
         no_matcheados = [m for m in matches if not m.matcheado]
@@ -277,7 +330,7 @@ class RegistradorNC:
 
                 self._insertar_cabecera_nc(
                     cursor, nuevo_ncredito, factura_sat, proveedor,
-                    factura_vinculada, tipo_nc, no_matcheados
+                    factura_vinculada, tipo_nc, no_matcheados, matcheados
                 )
                 self._insertar_detalles_nc(
                     cursor, nuevo_ncredito, factura_sat, proveedor,
@@ -289,18 +342,18 @@ class RegistradorNC:
 
             logger.info(f"Registro NC exitoso: NCF-{nuevo_ncredito}")
 
-            # Adjuntar XML a carpeta de red (no bloquea si falla)
-            if factura_sat.archivo_xml:
-                try:
-                    am = AttachmentManager(self.connector)
-                    am.adjuntar_nc(
-                        xml_origen=Path(factura_sat.archivo_xml),
-                        rfc_emisor=factura_sat.rfc_emisor,
-                        ncredito=nuevo_ncredito,
-                        fecha=factura_sat.fecha_emision,
-                    )
-                except Exception as e:
-                    logger.warning(f"No se pudo adjuntar XML de NCF-{nuevo_ncredito}: {e}")
+            # TODO: Adjuntar XML desactivado temporalmente por instruccion del cliente
+            # if factura_sat.archivo_xml:
+            #     try:
+            #         am = AttachmentManager(self.connector)
+            #         am.adjuntar_nc(
+            #             xml_origen=Path(factura_sat.archivo_xml),
+            #             rfc_emisor=factura_sat.rfc_emisor,
+            #             ncredito=nuevo_ncredito,
+            #             fecha=factura_sat.fecha_emision,
+            #         )
+            #     except Exception as e:
+            #         logger.warning(f"No se pudo adjuntar XML de NCF-{nuevo_ncredito}: {e}")
 
             return ResultadoRegistro(
                 exito=True,
@@ -381,6 +434,7 @@ class RegistradorNC:
         factura_vinculada: FacturaVinculada,
         tipo_nc: str,
         no_matcheados: Optional[List[ResultadoMatchProducto]] = None,
+        matcheados: Optional[List[ResultadoMatchProducto]] = None,
     ):
         """Insertar encabezado de NC en SAVNCredP"""
 
@@ -425,6 +479,7 @@ class RegistradorNC:
         query = """
             INSERT INTO SAVNCredP (
                 Serie, NCredito, Proveedor, ProveedorNombre, Fecha,
+                FacturarA,
                 RFC, Concepto, Capturo, PorcIva,
                 SubTotal, IVA, Total, Procesado, Estatus,
                 FechaAlta, UltimoCambio, TotalLetra,
@@ -445,6 +500,7 @@ class RegistradorNC:
                 Comentario
             ) VALUES (
                 ?, ?, ?, ?, ?,
+                ?,
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?,
@@ -472,6 +528,7 @@ class RegistradorNC:
             proveedor.clave,                             # Proveedor
             proveedor.empresa[:60],                      # ProveedorNombre
             factura_sat.fecha_emision,                   # Fecha (del XML)
+            self._construir_facturar_a(proveedor),       # FacturarA
             factura_sat.rfc_emisor,                      # RFC
             concepto,                                    # Concepto
             settings.usuario_sistema,                    # Capturo
@@ -506,7 +563,7 @@ class RegistradorNC:
             nc_electronica,                              # NCreditoElectronica
             0,                                           # NCreditoElectronicaExiste (no copiamos XML)
             0,                                           # NCreditoElectronicaValida
-            factura_sat.uuid.upper(),                    # TimbradoFolioFiscal
+            '',                                          # TimbradoFolioFiscal (UUID vacio por ahora)
             '',                                          # NCreditoElectronicaEstatus
             settings.sucursal,                           # Sucursal
             'TIENDA',                                    # Afectacion
@@ -520,7 +577,7 @@ class RegistradorNC:
             0,                                           # RetencionISR
             factura_sat.fecha_emision,                   # NCreditoFecha (fecha del CFDI Egreso)
             (factura_sat.folio or '')[:30],               # NCreditoProv (folio del proveedor)
-            self._construir_comentario_nc(factura_sat, no_matcheados),  # Comentario
+            self._construir_comentario_nc(factura_sat, no_matcheados, matcheados, tipo_nc),  # Comentario
         )
 
         cursor.execute(query, params)
@@ -693,25 +750,63 @@ class RegistradorNC:
             f"F-{factura_vinculada.num_rec}"
         )
 
+    def _construir_facturar_a(self, proveedor: 'ProveedorERP') -> str:
+        """Construir campo FacturarA con direccion del proveedor.
+
+        Formato ERP: {Direccion}\\r{Colonia}{CP}\\r{Ciudad}, {Estado}, {Pais}\\r
+        Si no tiene direccion, retorna 'NA'.
+        """
+        if not proveedor.direccion:
+            return 'NA'
+
+        linea1 = proveedor.direccion
+        linea2 = f'{proveedor.colonia}{proveedor.cp}'
+        linea3 = f'{proveedor.ciudad}, {proveedor.estado}, {proveedor.pais}'
+
+        return f'{linea1}\r{linea2}\r{linea3}\r'
+
     def _construir_comentario_nc(
         self,
         factura_sat: Factura,
         no_matcheados: Optional[List[ResultadoMatchProducto]] = None,
+        matcheados: Optional[List[ResultadoMatchProducto]] = None,
+        tipo_nc: str = 'DEVOLUCIONES',
     ) -> str:
         """Construir comentario para SAVNCredP.Comentario.
 
-        Incluye UUID de la NC y, si hay conceptos sin match, los lista
-        con cantidad para que las capturistas puedan registrarlos
-        manualmente desde el ERP.
+        Distingue 3 casos:
+        - DEVOLUCIONES sin ningun match: pide agregar producto manualmente
+        - DEVOLUCIONES parcial: lista conceptos sin match
+        - Otros: solo UUID
 
         NOTA: SAVNCredP.Comentario es varchar(150), se trunca.
         """
-        comentario = f'NC CFDI: {factura_sat.uuid.upper()}'
+        matcheados = matcheados or []
+        no_matcheados = no_matcheados or []
+
+        # Caso critico: DEVOLUCIONES sin ningun concepto matcheado
+        # El detalle queda vacio, la capturista debe agregar el producto
+        if tipo_nc == 'DEVOLUCIONES' and not matcheados and no_matcheados:
+            faltantes = []
+            for m in no_matcheados:
+                c = m.concepto_xml
+                cant = int(c.cantidad) if c.cantidad == int(c.cantidad) else float(c.cantidad)
+                importe = float(c.importe) if c.importe else 0
+                faltantes.append(
+                    f'{c.descripcion} ({cant} {c.unidad or "PZ"} ${importe:,.2f})'
+                )
+            comentario = f'SIN DETALLE - Agregar: {"; ".join(faltantes)}'
+            return comentario[:150]
+
+        comentario = f'NC Folio: {factura_sat.folio or "S/N"}'
         if no_matcheados:
             faltantes = []
             for m in no_matcheados:
                 c = m.concepto_xml
                 cant = int(c.cantidad) if c.cantidad == int(c.cantidad) else float(c.cantidad)
-                faltantes.append(f'{c.descripcion} ({cant} {c.unidad or "PZ"})')
+                importe = float(c.importe) if c.importe else 0
+                faltantes.append(
+                    f'{c.descripcion} ({cant} {c.unidad or "PZ"} ${importe:,.2f})'
+                )
             comentario += f' | PARCIAL - Sin match: {"; ".join(faltantes)}'
         return comentario[:150]

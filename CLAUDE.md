@@ -470,7 +470,7 @@ SUCURSAL=5
 
 # BD
 DB_SERVER=localhost              # localhost en el servidor, 100.73.181.41 via Tailscale
-DB_DATABASE=DBSAV71_TEST         # DBSAV71 para produccion
+DB_DATABASE=DBSAV71A             # Sandbox. DBSAV71 para produccion
 DB_DRIVER={SQL Server Native Client 11.0}  # En el servidor Windows
 ```
 

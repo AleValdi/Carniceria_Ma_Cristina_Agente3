@@ -29,9 +29,11 @@ class ProveedorRepository:
         rfc = rfc.strip().upper()
 
         query = f"""
-            SELECT Clave, Empresa, RFC, Ciudad, Estado, Tipo, Plazo
+            SELECT Clave, Empresa, RFC, Ciudad, Estado, Tipo, Plazo,
+                   Direccion, Colonia, CP, Pais
             FROM {self.config.tabla_proveedores}
             WHERE RFC = ?
+            ORDER BY Clave DESC
         """
 
         try:
@@ -50,6 +52,10 @@ class ProveedorRepository:
                 estado=row.get('Estado', '').strip() if row.get('Estado') else 'NO ASIGNADO',
                 tipo=row.get('Tipo', '').strip() if row.get('Tipo') else 'NACIONAL',
                 plazo=row.get('Plazo', 0) or 0,
+                direccion=row.get('Direccion', '').strip() if row.get('Direccion') else '',
+                colonia=row.get('Colonia', '').strip() if row.get('Colonia') else '',
+                cp=row.get('CP', '').strip() if row.get('CP') else '',
+                pais=row.get('Pais', '').strip() if row.get('Pais') else 'MÉXICO',
             )
 
             logger.debug(f"Proveedor encontrado: {proveedor.clave} - {proveedor.empresa}")

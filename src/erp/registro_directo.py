@@ -53,6 +53,45 @@ class RegistradorDirecto:
         cuenta = resultados[0]['cuenta'] if resultados else 0
         return cuenta > 0
 
+    def verificar_factura_duplicada(self, factura_sat: 'Factura') -> bool:
+        """
+        Verificar si una factura ya existe en la BD por RFC + Folio + Total + Fecha.
+        Complementa verificar_uuid_existe() cuando TimbradoFolioFiscal va vacio.
+
+        La combinacion RFC + Folio + Total + Fecha es unica en las ~66,000+
+        facturas de produccion (verificado Feb 2026).
+
+        Args:
+            factura_sat: Factura CFDI parseada del XML
+
+        Returns:
+            True si ya existe una factura con los mismos datos, False si no
+        """
+        folio = factura_sat.folio or ''
+        if not folio:
+            return False  # Sin folio no se puede validar
+
+        query = f"""
+            SELECT COUNT(*) as cuenta
+            FROM {self.config.tabla_recepciones}
+            WHERE Serie = ?
+              AND RFC = ?
+              AND Factura = ?
+              AND Total = ?
+              AND Fecha = ?
+        """
+        resultados = self.connector.execute_custom_query(
+            query, (
+                SERIE_FACTURA,
+                factura_sat.rfc_emisor,
+                folio,
+                float(factura_sat.total),
+                factura_sat.fecha_emision,
+            )
+        )
+        cuenta = resultados[0]['cuenta'] if resultados else 0
+        return cuenta > 0
+
     def obtener_siguiente_numrec(self) -> int:
         """Obtener el siguiente NumRec disponible para Serie F (dry-run)"""
         query = f"""
@@ -122,6 +161,22 @@ class RegistradorDirecto:
                 conceptos_matcheados_count=conceptos_ok,
                 mensaje=f"UUID ya existe en la BD: {uuid}",
                 error="UUID_DUPLICADO"
+            )
+
+        # Verificar duplicado por RFC + Folio + Total + Fecha
+        # (complementa UUID cuando TimbradoFolioFiscal va vacio)
+        if self.verificar_factura_duplicada(factura_sat):
+            folio = factura_sat.folio or ''
+            return ResultadoRegistro(
+                exito=False,
+                factura_uuid=uuid,
+                total_conceptos=total_conceptos,
+                conceptos_matcheados_count=conceptos_ok,
+                mensaje=(
+                    f"Factura duplicada: RFC={factura_sat.rfc_emisor}, "
+                    f"Folio={folio}, Total=${float(factura_sat.total):,.2f}"
+                ),
+                error="FACTURA_DUPLICADA"
             )
 
         if dry_run:
@@ -196,18 +251,18 @@ class RegistradorDirecto:
 
             logger.info(f"Registro exitoso: F-{nuevo_num_rec}")
 
-            # Adjuntar XML a carpeta de red (no bloquea si falla)
-            if factura_sat.archivo_xml:
-                try:
-                    am = AttachmentManager(self.connector)
-                    am.adjuntar_factura(
-                        xml_origen=Path(factura_sat.archivo_xml),
-                        rfc_emisor=factura_sat.rfc_emisor,
-                        num_rec=nuevo_num_rec,
-                        fecha=factura_sat.fecha_emision,
-                    )
-                except Exception as e:
-                    logger.warning(f"No se pudo adjuntar XML de F-{nuevo_num_rec}: {e}")
+            # TODO: Adjuntar XML desactivado temporalmente por instruccion del cliente
+            # if factura_sat.archivo_xml:
+            #     try:
+            #         am = AttachmentManager(self.connector)
+            #         am.adjuntar_factura(
+            #             xml_origen=Path(factura_sat.archivo_xml),
+            #             rfc_emisor=factura_sat.rfc_emisor,
+            #             num_rec=nuevo_num_rec,
+            #             fecha=factura_sat.fecha_emision,
+            #         )
+            #     except Exception as e:
+            #         logger.warning(f"No se pudo adjuntar XML de F-{nuevo_num_rec}: {e}")
 
             return ResultadoRegistro(
                 exito=True,
@@ -359,7 +414,7 @@ class RegistradorDirecto:
             'COMPRAS',                               # TipoRecepcion
             0,                                       # Consolidacion = 0 (NO es consolidacion)
             factura_sat.rfc_emisor,                  # RFC
-            factura_sat.uuid.upper(),                # TimbradoFolioFiscal
+            '',                                      # TimbradoFolioFiscal (UUID vacio por ahora)
             factura_sat.fecha_emision,               # FacturaFecha
             settings.sucursal,                       # Sucursal
             'NA',                                    # Departamento
@@ -386,13 +441,16 @@ class RegistradorDirecto:
         """Construir comentario para SAVRecC.Comentario.
         Si hay conceptos sin match, los lista con cantidad para que las
         capturistas puedan registrarlos manualmente desde el ERP."""
-        comentario = f'REGISTRO DIRECTO CFDI: {factura_sat.uuid.upper()}'
+        comentario = f'CFDI Folio: {factura_sat.folio or "S/N"}'
         if no_matcheados:
             faltantes = []
             for m in no_matcheados:
                 c = m.concepto_xml
                 cant = int(c.cantidad) if c.cantidad == int(c.cantidad) else float(c.cantidad)
-                faltantes.append(f'{c.descripcion} ({cant} {c.unidad or "PZ"})')
+                importe = float(c.importe) if c.importe else 0
+                faltantes.append(
+                    f'{c.descripcion} ({cant} {c.unidad or "PZ"} ${importe:,.2f})'
+                )
             comentario += f' | PARCIAL - Sin match: {"; ".join(faltantes)}'
         return comentario
 

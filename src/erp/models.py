@@ -33,6 +33,10 @@ class ProveedorERP:
     estado: str           # Estado
     tipo: str             # Tipo (ej: "NACIONAL")
     plazo: int            # Dias de credito
+    direccion: str = ''   # Direccion (calle y numero)
+    colonia: str = ''     # Colonia
+    cp: str = ''          # Codigo postal
+    pais: str = 'MÉXICO'  # Pais
 
 
 @dataclass
