@@ -49,7 +49,8 @@ Agente3/
 │   │   ├── factura_repo.py          # Buscar facturas F por UUID (para vincular NCs)
 │   │   └── validacion_cruzada.py    # Validar remisiones pendientes antes de registrar
 │   ├── cfdi/
-│   │   └── attachment_manager.py    # Copia XML a carpeta de red SAV7 + actualiza BD
+│   │   ├── attachment_manager.py    # Copia XML a carpeta de red SAV7 + actualiza BD (DESACTIVADO temporalmente)
+│   │   └── pdf_generator.py         # Genera PDF desde XML CFDI usando satcfdi (opcional)
 │   ├── matching/
 │   │   ├── cache_productos.py       # Indices en memoria + expandir_abreviaturas() + normalizar_texto()
 │   │   ├── historial_compras.py     # Productos que el proveedor ha comprado antes + frecuencia
@@ -58,7 +59,7 @@ Agente3/
 │       └── excel_generator.py       # Reporte Excel con 7 hojas
 ```
 
-**18 modulos totales.** 4 reutilizados de Agente2, 14 nuevos.
+**17 modulos totales.** 4 reutilizados de Agente2, 13 nuevos.
 
 ---
 
@@ -231,7 +232,9 @@ Se ejecuta en `main.py` entre la busqueda de proveedor y el matching de producto
 
 ---
 
-## Adjuntos CFDI (attachment_manager.py)
+## Adjuntos CFDI (attachment_manager.py) — DESACTIVADO
+
+> **Estado actual:** Desactivado temporalmente por instruccion del cliente. Las llamadas a `AttachmentManager` estan comentadas en `registro_directo.py` y `registro_nc.py`. Como consecuencia, `TimbradoFolioFiscal` se guarda como `''` (vacio) en lugar del UUID, y los XML no se copian a la carpeta de red. La funcionalidad esta completa y lista para reactivar.
 
 Despues de registrar una factura F o una NC NCF, el sistema copia el XML a la carpeta de red compartida de SAV7 y actualiza los campos de factura electronica en la BD. Replica el comportamiento del AttachmentManager del Agente 2.
 
@@ -289,7 +292,13 @@ Si la copia o actualizacion falla, se loguea warning pero **no se revierte el re
 | `Moneda` | `'PESOS'` | |
 | `Sucursal` | `5` | Configurable en .env |
 | `NumOC` | `0` | Sin orden de compra |
-| `TimbradoFolioFiscal` | UUID CFDI | **UPPERCASE** |
+| `TimbradoFolioFiscal` | `''` (vacio) | UUID desactivado temporalmente (ver seccion Adjuntos CFDI). Al reactivar: UUID CFDI **UPPERCASE** |
+| `Tipo` | `'Credito'` | Tipo de pago |
+| `Referencia` | `'CREDITO'` | Referencia de pago |
+| `SubTotal2` | = `SubTotal1` | Copia del subtotal |
+| `TotalPrecio` | = `Total` | Copia del total |
+| `TotalRecibidoNeto` | = `Total` | Copia del total |
+| `SerieRFC` | `''` (vacio) | Campo requerido |
 | `Articulos` | `round(suma_cantidades)` | Redondear: 199.8 -> 200 |
 | `TotalLetra` | `numero_a_letra(total)` | Monto en palabras |
 | `TipoRecepcion` | `'COMPRAS'` | |
@@ -308,6 +317,7 @@ Si la copia o actualizacion falla, se loguea warning pero **no se revierte el re
 | `PorcIva` | Del catalogo o XML | Preferir XML si difiere |
 | `Unidad` | Del catalogo | Ej: KG, PZA, LT |
 | `CodProv` | `''` (vacio) | Patron de registros manuales |
+| `Talla` | = `Orden` | Numero secuencial (mismo valor que Orden) |
 | `Orden` | Secuencial desde 1 | |
 
 ### Registros parciales
@@ -320,8 +330,14 @@ Si `REGISTRAR_PARCIALES=true` (default) y >= 50% de conceptos matchean:
 ### Validaciones de seguridad
 
 1. **UUID unico**: `SELECT COUNT(*) FROM SAVRecC WHERE TimbradoFolioFiscal = ? AND Serie = 'F'`
-2. **Proveedor existe**: Busqueda por RFC en SAVProveedor
-3. **Transaccion atomica**: Todos los INSERTs en un solo `with cursor` (commit/rollback)
+2. **Factura duplicada**: `SELECT COUNT(*) FROM SAVRecC WHERE Serie=? AND RFC=? AND Factura=? AND Total=? AND Fecha=?` (para UUID vacio)
+3. **Proveedor existe**: Busqueda por RFC en SAVProveedor
+4. **Transaccion atomica**: Todos los INSERTs en un solo `with cursor` (commit/rollback)
+
+### Campos INSERT totales
+
+- **SAVRecC (cabecera)**: 46 campos (ver query completo en `registro_directo.py`)
+- **SAVRecD (detalle)**: 29 campos por linea
 
 ---
 
@@ -369,7 +385,7 @@ Esto se controla con la constante `RFC_PROVEEDORES_CON_DESCUENTO` en `registro_n
 | `Concepto` | `"DEVOLUCION RECOC F-{NumRec} FACT: {Factura} FECHA: {dd/MMM/yyyy}"` | Truncar a 60 chars |
 | `Estatus` | `'No Aplicada'` | **Sin acreditacion automatica** |
 | `TipoNCredito` | `'DEVOLUCIONES'` o `'DESCUENTOS'` | Segun logica de determinacion |
-| `TimbradoFolioFiscal` | UUID del CFDI Egreso | **UPPERCASE** |
+| `TimbradoFolioFiscal` | `''` (vacio) | UUID desactivado temporalmente (ver seccion Adjuntos CFDI). Al reactivar: UUID CFDI Egreso **UPPERCASE** |
 | `NCreditoProv` | `factura_sat.folio` | Numero de NC del proveedor |
 | `Comprador` | `'AGENTE3_SAT'` | Identifica registros del agente |
 | `TotalAcredita` | Total NC | Para tracking |
@@ -467,11 +483,16 @@ MIN_LONGITUD_TOKEN_SET=5             # Min chars para activar token_set_ratio
 ESTATUS_REGISTRO=No Pagada
 USUARIO_SISTEMA=AGENTE3_SAT
 SUCURSAL=5
+NUMREC_RANGO_MINIMO=900000      # Rango reservado para evitar colision con ERP (~68,000)
+NCREDITO_RANGO_MINIMO=50000     # Rango reservado para NCs (ERP usa ~1,200)
+PRODUCTO_DESCUENTO=INSADM094    # Producto generico para NCs tipo DESCUENTOS
 
 # BD
 DB_SERVER=localhost              # localhost en el servidor, 100.73.181.41 via Tailscale
 DB_DATABASE=DBSAV71A             # Sandbox. DBSAV71 para produccion
 DB_DRIVER={SQL Server Native Client 11.0}  # En el servidor Windows
+DB_TRUSTED_CONNECTION=false      # true = Windows Auth (sin usuario/password)
+DB_TIMEOUT=30                    # Timeout de conexion en segundos
 ```
 
 ### .env.local (desarrollo remoto, NO se commitea)
@@ -501,14 +522,15 @@ python main.py --explorar-catalogo    # Cargar catalogo y mostrar estadisticas
 
 ---
 
-## Reporte Excel (6 hojas)
+## Reporte Excel (7 hojas)
 
-1. **Resumen**: Totales procesados, exitosos, parciales, fallidos
-2. **Exitosos**: Facturas F creadas completas
-3. **Parciales**: Facturas F creadas con conceptos sin match
-4. **No Registradas**: Facturas que no se pudieron registrar
-5. **Sin Match**: Conceptos individuales que no matchearon
-6. **Detalle Matching**: Log completo de cada concepto y su metodo de match
+1. **Resumen**: Totales procesados, exitosos, parciales, fallidos (Ingreso + NC separados); desglose por tipo de error; cuenta de bloqueadas por remision
+2. **Exitosos**: Facturas F Ingreso creadas completas (no parciales, no NC)
+3. **Parciales**: Facturas F Ingreso creadas con conceptos sin match
+4. **NCs Registradas**: Notas de Credito Egreso registradas exitosamente
+5. **No Registradas**: Facturas y NCs que no se pudieron registrar (ambos tipos combinados)
+6. **Sin Match**: Conceptos individuales que no matchearon con ningun producto ERP
+7. **Detalle Matching**: Log completo de cada concepto y su metodo de match, score, nivel, candidatos descartados
 
 ---
 
@@ -521,6 +543,7 @@ lxml>=4.9.0             # Parser XML CFDI
 openpyxl>=3.1.0         # Reportes Excel
 rapidfuzz>=3.0.0        # Fuzzy matching (reemplazo de fuzzywuzzy)
 loguru>=0.7.0           # Logging
+satcfdi>=4.4.0          # Generacion de PDF desde XML CFDI (opcional, import graceful)
 pytest>=7.4.0           # Testing
 ```
 
@@ -594,6 +617,25 @@ Equivalentes en produccion: NCF-1195 (DESCUENTOS) y NCF-1196 (DEVOLUCIONES).
 SELECT ISNULL(MAX(NumRec), 0) + 1 FROM SAVRecC WHERE Serie = 'F';
 -- Al 12 Feb 2026: 67771 (post-pruebas)
 ```
+
+---
+
+## Codigos de Error (ResultadoRegistro.error)
+
+| Codigo | Contexto | Descripcion |
+|--------|----------|-------------|
+| `TIPO_NO_SOPORTADO` | Ingreso/Egreso | Tipo comprobante T, N o P (no soportado) |
+| `SIN_CONCEPTOS` | Ingreso | XML sin conceptos parseable |
+| `PROVEEDOR_NO_ENCONTRADO` | Ingreso/Egreso | RFC no existe en SAVProveedor |
+| `REMISION_PENDIENTE` | Ingreso | Validacion cruzada detecto remision similar (BLOQUEAR) |
+| `INSUFICIENTES_MATCHES` | Ingreso | Menos del 50% de conceptos matchearon |
+| `UUID_DUPLICADO` | Ingreso | UUID ya existe en SAVRecC Serie F |
+| `FACTURA_DUPLICADA` | Ingreso | Combinacion RFC+Factura+Total+Fecha ya existe (para UUID vacio) |
+| `SIN_CFDI_RELACIONADO` | Egreso (NC) | XML Egreso sin nodo CfdiRelacionados |
+| `FACTURA_VINCULADA_NO_ENCONTRADA` | Egreso (NC) | UUID relacionado no encontrado en SAVRecC Serie F |
+| `FACTURA_NO_APTA` | Egreso (NC) | Factura vinculada no cumple validacion (estatus, proveedor, saldo) |
+| `UUID_NC_DUPLICADO` | Egreso (NC) | UUID ya existe en SAVNCredP Serie NCF |
+| `NC_DUPLICADA` | Egreso (NC) | Combinacion RFC+NCreditoProv+Total ya existe |
 
 ---
 
