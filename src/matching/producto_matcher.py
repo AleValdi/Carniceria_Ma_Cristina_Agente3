@@ -80,6 +80,11 @@ class ProductoMatcher:
                 resultado.metodo_match = "exacto_expandido"
                 return resultado
 
+        # Paso 1.5: Match directo por codigo SAT unico (1:1)
+        resultado = self._match_codigo_sat_unico(concepto)
+        if resultado.matcheado:
+            return resultado
+
         # Paso 2: Historial del proveedor + fuzzy (token_sort_ratio)
         resultado = self._match_historial_proveedor(
             concepto, nombre_expandido, clave_proveedor
@@ -166,6 +171,29 @@ class ProductoMatcher:
                 nivel_confianza="EXACTO",
                 metodo_match="exacto",
                 mensaje=f"Match exacto: {producto.codigo}"
+            )
+
+        return ResultadoMatchProducto(concepto_xml=concepto)
+
+    def _match_codigo_sat_unico(
+        self,
+        concepto: Concepto,
+    ) -> ResultadoMatchProducto:
+        """Paso 1.5: Match directo cuando el codigo SAT mapea a un solo producto"""
+        codigo_sat = concepto.clave_prod_serv
+        producto = self.cache.buscar_unico_por_codigo_sat(codigo_sat)
+
+        if producto:
+            logger.debug(
+                f"Match por codigo SAT unico {codigo_sat}: {producto.codigo} ({producto.nombre})"
+            )
+            return ResultadoMatchProducto(
+                concepto_xml=concepto,
+                producto_erp=producto,
+                confianza=0.95,
+                nivel_confianza="ALTA",
+                metodo_match="codigo_sat_unico",
+                mensaje=f"Match por codigo SAT unico {codigo_sat}: {producto.codigo}"
             )
 
         return ResultadoMatchProducto(concepto_xml=concepto)

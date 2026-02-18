@@ -182,6 +182,21 @@ class CacheProductos:
             return []
         return self._por_codigo_sat.get(codigo_sat, [])
 
+    def buscar_unico_por_codigo_sat(self, codigo_sat: str) -> Optional[ProductoERP]:
+        """
+        Busqueda O(1) por codigo SAT cuando hay match 1:1.
+
+        Args:
+            codigo_sat: ClaveProdServ del SAT
+
+        Returns:
+            ProductoERP si hay exactamente 1 producto con ese codigo SAT, None si hay 0 o 2+
+        """
+        productos = self.buscar_por_codigo_sat(codigo_sat)
+        if len(productos) == 1:
+            return productos[0]
+        return None
+
     def buscar_por_codigo(self, codigo: str) -> Optional[ProductoERP]:
         """
         Busqueda O(1) por codigo de producto ERP.

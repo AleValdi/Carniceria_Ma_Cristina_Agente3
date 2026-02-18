@@ -79,6 +79,13 @@ Paso 1: MATCH EXACTO por nombre normalizado
   -> Si encuentra -> confianza 100%, nivel EXACTO
   -> metodo_match = "exacto" o "exacto_expandido"
 
+Paso 1.5: MATCH DIRECTO POR CODIGO SAT UNICO
+  -> Si ClaveProdServ del XML mapea a exactamente 1 producto en el catalogo -> match directo
+  -> Sin fuzzy, O(1) en diccionario
+  -> 298 codigos SAT tienen match 1:1 (45 FYV, 65 abarrotes, 143 insumos)
+  -> confianza 95%, nivel ALTA, metodo_match = "codigo_sat_unico"
+  -> Ej: ClaveProdServ=50307025 -> PLATANO (FYV001025), unico producto con ese codigo
+
 Paso 2: HISTORIAL PROVEEDOR + token_sort_ratio
   -> Productos que el proveedor ha comprado antes (query SAVRecD/SAVRecC)
   -> Usa nombre expandido (con abreviaturas resueltas)
