@@ -342,18 +342,17 @@ class RegistradorNC:
 
             logger.info(f"Registro NC exitoso: NCF-{nuevo_ncredito}")
 
-            # TODO: Adjuntar XML desactivado temporalmente por instruccion del cliente
-            # if factura_sat.archivo_xml:
-            #     try:
-            #         am = AttachmentManager(self.connector)
-            #         am.adjuntar_nc(
-            #             xml_origen=Path(factura_sat.archivo_xml),
-            #             rfc_emisor=factura_sat.rfc_emisor,
-            #             ncredito=nuevo_ncredito,
-            #             fecha=factura_sat.fecha_emision,
-            #         )
-            #     except Exception as e:
-            #         logger.warning(f"No se pudo adjuntar XML de NCF-{nuevo_ncredito}: {e}")
+            if factura_sat.archivo_xml:
+                try:
+                    am = AttachmentManager(self.connector)
+                    am.adjuntar_nc(
+                        xml_origen=Path(factura_sat.archivo_xml),
+                        rfc_emisor=factura_sat.rfc_emisor,
+                        ncredito=nuevo_ncredito,
+                        fecha=factura_sat.fecha_emision,
+                    )
+                except Exception as e:
+                    logger.warning(f"No se pudo adjuntar XML de NCF-{nuevo_ncredito}: {e}")
 
             return ResultadoRegistro(
                 exito=True,
@@ -563,7 +562,7 @@ class RegistradorNC:
             nc_electronica,                              # NCreditoElectronica
             0,                                           # NCreditoElectronicaExiste (no copiamos XML)
             0,                                           # NCreditoElectronicaValida
-            '',                                          # TimbradoFolioFiscal (UUID vacio por ahora)
+            uuid,                                          # TimbradoFolioFiscal
             '',                                          # NCreditoElectronicaEstatus
             settings.sucursal,                           # Sucursal
             'TIENDA',                                    # Afectacion

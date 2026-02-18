@@ -251,18 +251,17 @@ class RegistradorDirecto:
 
             logger.info(f"Registro exitoso: F-{nuevo_num_rec}")
 
-            # TODO: Adjuntar XML desactivado temporalmente por instruccion del cliente
-            # if factura_sat.archivo_xml:
-            #     try:
-            #         am = AttachmentManager(self.connector)
-            #         am.adjuntar_factura(
-            #             xml_origen=Path(factura_sat.archivo_xml),
-            #             rfc_emisor=factura_sat.rfc_emisor,
-            #             num_rec=nuevo_num_rec,
-            #             fecha=factura_sat.fecha_emision,
-            #         )
-            #     except Exception as e:
-            #         logger.warning(f"No se pudo adjuntar XML de F-{nuevo_num_rec}: {e}")
+            if factura_sat.archivo_xml:
+                try:
+                    am = AttachmentManager(self.connector)
+                    am.adjuntar_factura(
+                        xml_origen=Path(factura_sat.archivo_xml),
+                        rfc_emisor=factura_sat.rfc_emisor,
+                        num_rec=nuevo_num_rec,
+                        fecha=factura_sat.fecha_emision,
+                    )
+                except Exception as e:
+                    logger.warning(f"No se pudo adjuntar XML de F-{nuevo_num_rec}: {e}")
 
             return ResultadoRegistro(
                 exito=True,
@@ -414,7 +413,7 @@ class RegistradorDirecto:
             'COMPRAS',                               # TipoRecepcion
             0,                                       # Consolidacion = 0 (NO es consolidacion)
             factura_sat.rfc_emisor,                  # RFC
-            '',                                      # TimbradoFolioFiscal (UUID vacio por ahora)
+            uuid,                                      # TimbradoFolioFiscal
             factura_sat.fecha_emision,               # FacturaFecha
             settings.sucursal,                       # Sucursal
             'NA',                                    # Departamento
