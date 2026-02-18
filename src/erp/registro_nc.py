@@ -562,7 +562,7 @@ class RegistradorNC:
             nc_electronica,                              # NCreditoElectronica
             0,                                           # NCreditoElectronicaExiste (no copiamos XML)
             0,                                           # NCreditoElectronicaValida
-            uuid,                                          # TimbradoFolioFiscal
+            factura_sat.uuid.upper(),                          # TimbradoFolioFiscal
             '',                                          # NCreditoElectronicaEstatus
             settings.sucursal,                           # Sucursal
             'TIENDA',                                    # Afectacion

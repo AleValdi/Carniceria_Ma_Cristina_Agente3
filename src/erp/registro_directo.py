@@ -413,7 +413,7 @@ class RegistradorDirecto:
             'COMPRAS',                               # TipoRecepcion
             0,                                       # Consolidacion = 0 (NO es consolidacion)
             factura_sat.rfc_emisor,                  # RFC
-            uuid,                                      # TimbradoFolioFiscal
+            factura_sat.uuid.upper(),                    # TimbradoFolioFiscal
             factura_sat.fecha_emision,               # FacturaFecha
             settings.sucursal,                       # Sucursal
             'NA',                                    # Departamento
