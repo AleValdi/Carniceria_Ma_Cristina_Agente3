@@ -49,6 +49,7 @@ class ResultadoMatchProducto:
     metodo_match: str = ""  # exacto, historial, codigo_sat, fuzzy_global
     candidatos_descartados: int = 0
     mensaje: str = ""
+    cantidad_neta: Decimal = Decimal("0")  # Del Google Sheets (0 si no hay match)
 
     @property
     def matcheado(self) -> bool:

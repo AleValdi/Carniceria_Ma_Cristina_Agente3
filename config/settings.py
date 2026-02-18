@@ -96,6 +96,13 @@ class Settings:
         ).lower() == 'true'
     )
 
+    # Google Sheets - Cantidad Neta
+    google_sheets_habilitado: bool = False
+    google_sheets_credentials: str = "config/google_credentials.json"
+    google_sheets_token: str = "config/token.json"
+    google_sheet_id: str = ""
+    google_sheet_hoja_id: int = 0
+
     # Configuracion de logging
     log_level: str = "INFO"
     log_format: str = "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
@@ -129,6 +136,11 @@ class Settings:
             dias_max_remision_pendiente=int(os.getenv('DIAS_MAX_REMISION_PENDIENTE', '30')),
             numrec_rango_minimo=int(os.getenv('NUMREC_RANGO_MINIMO', '900000')),
             ncredito_rango_minimo=int(os.getenv('NCREDITO_RANGO_MINIMO', '50000')),
+            google_sheets_habilitado=os.getenv('GOOGLE_SHEETS_HABILITADO', 'false').lower() == 'true',
+            google_sheets_credentials=os.getenv('GOOGLE_SHEETS_CREDENTIALS', 'config/google_credentials.json'),
+            google_sheets_token=os.getenv('GOOGLE_SHEETS_TOKEN', 'config/token.json'),
+            google_sheet_id=os.getenv('GOOGLE_SHEET_ID', ''),
+            google_sheet_hoja_id=int(os.getenv('GOOGLE_SHEET_HOJA_ID', '0')),
         )
 
 

@@ -14,7 +14,7 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from loguru import logger
 
@@ -33,6 +33,8 @@ from src.matching.cache_productos import CacheProductos
 from src.matching.historial_compras import HistorialCompras
 from src.matching.producto_matcher import ProductoMatcher
 from src.reports.excel_generator import ExcelGenerator
+from src.sheets.sheets_reader import SheetsReader
+from src.sheets.cantidad_neta_resolver import CantidadNetaResolver
 
 
 def configurar_logger():
@@ -158,6 +160,7 @@ def procesar_factura(
     registrador_nc: RegistradorNC,
     validador: ValidadorRemisiones,
     dry_run: bool = False,
+    cantidad_neta_resolver: Optional[CantidadNetaResolver] = None,
 ) -> Tuple[ResultadoRegistro, List[ResultadoMatchProducto]]:
     """
     Procesar una factura individual (Ingreso o Egreso/NC).
@@ -235,6 +238,10 @@ def procesar_factura(
 
     # Matchear conceptos
     matches = matcher.matchear_lote(factura.conceptos, proveedor.clave)
+
+    # Resolver CantidadNeta desde Google Sheets (si esta habilitado)
+    if cantidad_neta_resolver:
+        cantidad_neta_resolver.resolver_para_factura(factura, matches)
 
     # Registrar en ERP
     resultado = registrador.registrar(factura, proveedor, matches, dry_run=dry_run)
@@ -375,6 +382,28 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
     historial = HistorialCompras(connector, cache)
     matcher = ProductoMatcher(cache, historial)
 
+    # Inicializar Google Sheets para CantidadNeta (opcional)
+    cantidad_neta_resolver = None
+    if settings.google_sheets_habilitado:
+        try:
+            logger.info("Cargando datos de Google Sheets para CantidadNeta...")
+            sheets_reader = SheetsReader(
+                credentials_path=str(BASE_DIR / settings.google_sheets_credentials),
+                token_path=str(BASE_DIR / settings.google_sheets_token),
+                sheet_id=settings.google_sheet_id,
+                hoja_id=settings.google_sheet_hoja_id,
+            )
+            sheets_data = sheets_reader.leer_datos_recepcion()
+            if sheets_data:
+                cantidad_neta_resolver = CantidadNetaResolver(sheets_data, cache)
+                logger.info(f"CantidadNeta habilitado: {len(sheets_data)} entradas del sheet")
+            else:
+                logger.warning("Google Sheets: sin datos, CantidadNeta sera 0")
+        except Exception as e:
+            logger.warning(f"Google Sheets no disponible: {e}. CantidadNeta sera 0.")
+    else:
+        logger.debug("Google Sheets deshabilitado (GOOGLE_SHEETS_HABILITADO=false)")
+
     # Parsear XMLs
     parser = CFDIParser()
     if archivo_unico:
@@ -412,7 +441,7 @@ def procesar_lote(dry_run: bool = False, archivo_unico: str = None):
 
         resultado, matches = procesar_factura(
             factura, proveedor_repo, matcher, registrador, registrador_nc,
-            validador, dry_run
+            validador, dry_run, cantidad_neta_resolver
         )
         resultados.append(resultado)
         todos_matches.append((factura, matches))

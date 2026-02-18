@@ -515,7 +515,7 @@ class RegistradorDirecto:
                 '',                                   # Pedimento
                 secuencia,                            # Orden
                 0,                                    # ComplementoIva
-                0,                                    # CantidadNeta
+                float(match.cantidad_neta),           # CantidadNeta (del Google Sheets o 0)
                 0,                                    # CostoDif
                 0,                                    # Precio
                 0,                                    # CantidadUM2

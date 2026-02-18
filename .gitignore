@@ -3,6 +3,7 @@
 .env.local
 config/credentials.json
 config/*.json
+config/token.json
 
 # Python
 __pycache__/

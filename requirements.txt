@@ -14,6 +14,11 @@ openpyxl>=3.1.0
 # Matching de productos
 rapidfuzz>=3.0.0
 
+# Google Sheets (para CantidadNeta desde hoja de recepcion)
+gspread>=5.11.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+
 # Logging
 loguru>=0.7.0
 
