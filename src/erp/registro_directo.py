@@ -388,7 +388,7 @@ class RegistradorDirecto:
             proveedor.empresa[:60],                  # ProveedorNombre
             factura_sat.fecha_emision,               # Fecha (del XML)
             settings.usuario_sistema,                # Comprador
-            1,                                       # Procesada
+            0,                                       # Procesada
             fecha_actual,                            # FechaAlta
             fecha_actual,                            # UltimoCambio
             settings.estatus_registro,               # Estatus
@@ -409,7 +409,7 @@ class RegistradorDirecto:
             settings.usuario_sistema,                # CapturoCambio
             int(total_articulos),                    # Articulos
             total_partidas,                          # Partidas
-            fecha_actual,                            # ProcesadaFecha
+            None,                                    # ProcesadaFecha
             1,                                       # IntContable
             'COMPRAS',                               # TipoRecepcion
             0,                                       # Consolidacion = 0 (NO es consolidacion)

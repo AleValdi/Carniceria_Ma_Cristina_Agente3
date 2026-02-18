@@ -536,7 +536,7 @@ class RegistradorNC:
             subtotal,                                    # SubTotal
             iva,                                         # IVA
             total,                                       # Total
-            1,                                           # Procesado
+            0,                                           # Procesado
             'No Aplicada',                               # Estatus
             fecha_actual,                                # FechaAlta
             fecha_actual,                                # UltimoCambio
@@ -549,7 +549,7 @@ class RegistradorNC:
             total_articulos,                             # Articulos
             total_partidas,                              # Partidas
             total_partidas,                              # PartidasMovInv
-            fecha_actual,                                # ProcesadaFecha
+            None,                                        # ProcesadaFecha
             settings.usuario_sistema,                    # Comprador
             'CREDITO',                                   # Referencia
             tipo_nc,                                     # TipoNCredito
@@ -558,7 +558,7 @@ class RegistradorNC:
             settings.usuario_sistema,                    # CapturoCambio
             fecha_actual,                                # FechaAltaHora
             fecha_actual,                                # UltimoCambioHora
-            settings.usuario_sistema,                    # ProcesadaCapturo
+            None,                                        # ProcesadaCapturo
             0,                                           # IEPS
             nc_electronica,                              # NCreditoElectronica
             0,                                           # NCreditoElectronicaExiste (no copiamos XML)
