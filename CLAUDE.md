@@ -189,8 +189,7 @@ Antes de registrar una factura Serie F, el sistema verifica si el proveedor tien
 | Nivel | Condicion | Accion |
 |-------|-----------|--------|
 | **SEGURO** | Sin remisiones pendientes del proveedor | Registrar normalmente |
-| **REVISAR** | Hay remisiones pendientes pero ninguna con monto/fecha similar | Registrar con advertencia en reporte |
-| **BLOQUEAR** | Remision pendiente con monto ±2% Y fecha ±15 dias | NO registrar, reportar para revision manual |
+| **BLOQUEAR** | Proveedor tiene cualquier remision pendiente | NO registrar, reportar para revision manual |
 
 ### Query de remisiones pendientes
 
@@ -210,9 +209,9 @@ Doble filtro (`Estatus != 'Consolidada'` + `Consolida = 0`) como cinturon de seg
 
 1. Si `VALIDAR_REMISIONES_PENDIENTES=false` → SEGURO (toggle desactivado)
 2. Si no hay remisiones pendientes → SEGURO
-3. Para cada remision: calcular `diferencia_monto_pct` y `diferencia_dias`
-4. Si mejor candidato tiene `dif_monto <= 2%` AND `dif_dias <= 15` → **BLOQUEAR**
-5. Si no → **REVISAR** (hay remisiones pero ninguna similar)
+3. Si hay cualquier remision pendiente → **BLOQUEAR** (politica conservadora)
+
+La comparacion de monto/fecha se usa solo para enriquecer el mensaje de bloqueo (identifica el mejor candidato), pero no cambia la clasificacion.
 
 ### Settings
 
@@ -224,7 +223,7 @@ Doble filtro (`Estatus != 'Consolidada'` + `Consolida = 0`) como cinturon de seg
 
 ### Error code
 
-`REMISION_PENDIENTE` — La factura fue bloqueada porque existe una remision pendiente similar. Aparece en la hoja "No Registradas" del reporte Excel.
+`REMISION_PENDIENTE` — La factura fue bloqueada porque el proveedor tiene remisiones pendientes. Aparece en la hoja "No Registradas" del reporte Excel.
 
 ### Punto de integracion
 

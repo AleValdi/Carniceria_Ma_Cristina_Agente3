@@ -8,8 +8,8 @@ Agente 2 clasifica incorrectamente una factura como "Sin Remision".
 
 Clasificacion:
 - SEGURO: Sin remisiones pendientes del proveedor -> registrar normalmente
-- REVISAR: Hay remisiones pendientes pero ninguna similar -> registrar con advertencia
-- BLOQUEAR: Remision pendiente con monto y fecha similares -> NO registrar
+- BLOQUEAR: Proveedor tiene remisiones pendientes -> NO registrar
+  (politica conservadora: preferible no registrar que arriesgar duplicado)
 """
 from datetime import datetime
 from typing import List, Optional
@@ -190,7 +190,9 @@ class ValidadorRemisiones:
                 mensaje=mensaje,
             )
         else:
-            # REVISAR: hay remisiones pero ninguna matchea en monto+fecha
+            # BLOQUEAR: hay remisiones pendientes aunque ninguna matchee en monto+fecha.
+            # Politica conservadora: preferible no registrar y reportar para revision
+            # manual, que arriesgar un duplicado si Agente 2 consolida despues.
             if mejor_candidato:
                 detalle_mejor = (
                     f"Mejor candidato: R-{mejor_candidato.num_rec} "
@@ -203,14 +205,14 @@ class ValidadorRemisiones:
 
             mensaje = (
                 f"Proveedor tiene {len(remisiones)} remisiones pendientes "
-                f"pero ninguna similar en monto/fecha. {detalle_mejor}"
+                f"(ninguna similar en monto/fecha). {detalle_mejor}"
             )
-            logger.info(
-                f"REVISAR: Proveedor {proveedor.clave} tiene "
-                f"{len(remisiones)} remisiones pendientes (ninguna similar)"
+            logger.warning(
+                f"BLOQUEAR: Proveedor {proveedor.clave} tiene "
+                f"{len(remisiones)} remisiones pendientes"
             )
             return ResultadoValidacion(
-                clasificacion='REVISAR',
+                clasificacion='BLOQUEAR',
                 total_remisiones_pendientes=len(remisiones),
                 remision_similar=mejor_candidato,
                 remisiones_pendientes=remisiones,
