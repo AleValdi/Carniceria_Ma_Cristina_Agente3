@@ -11,7 +11,7 @@ Clasificacion:
 - BLOQUEAR: Proveedor tiene remisiones pendientes -> NO registrar
   (politica conservadora: preferible no registrar que arriesgar duplicado)
 """
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Optional
 
 from loguru import logger
@@ -100,7 +100,7 @@ class ValidadorRemisiones:
             proveedor: Proveedor encontrado en SAVProveedor
 
         Returns:
-            ResultadoValidacion con clasificacion SEGURO, REVISAR o BLOQUEAR
+            ResultadoValidacion con clasificacion SEGURO o BLOQUEAR
         """
         # Toggle: si la validacion esta desactivada, siempre es SEGURO
         if not settings.validar_remisiones_pendientes:
@@ -120,9 +120,9 @@ class ValidadorRemisiones:
             )
 
         # Obtener remisiones pendientes del proveedor
-        remisiones = self.obtener_remisiones_pendientes(proveedor.clave)
+        todas_remisiones = self.obtener_remisiones_pendientes(proveedor.clave)
 
-        if not remisiones:
+        if not todas_remisiones:
             logger.debug(
                 f"Proveedor {proveedor.clave} sin remisiones pendientes -> SEGURO"
             )
@@ -130,6 +130,38 @@ class ValidadorRemisiones:
                 clasificacion='SEGURO',
                 total_remisiones_pendientes=0,
                 mensaje='Sin remisiones pendientes'
+            )
+
+        # Filtrar: solo considerar remisiones recientes (menos de N dias)
+        dias_max = settings.dias_max_remision_pendiente
+        hoy = date.today()
+        remisiones = []
+        remisiones_viejas = 0
+        for rem in todas_remisiones:
+            try:
+                fecha_rem = rem.fecha
+                if isinstance(fecha_rem, datetime):
+                    fecha_rem = fecha_rem.date()
+                antiguedad = (hoy - fecha_rem).days if fecha_rem else 0
+                if antiguedad > dias_max:
+                    remisiones_viejas += 1
+                    continue
+            except (TypeError, AttributeError):
+                pass  # Sin fecha valida, considerarla reciente por seguridad
+            remisiones.append(rem)
+
+        if not remisiones:
+            logger.debug(
+                f"Proveedor {proveedor.clave}: {remisiones_viejas} remisiones "
+                f"pendientes pero todas con mas de {dias_max} dias -> SEGURO"
+            )
+            return ResultadoValidacion(
+                clasificacion='SEGURO',
+                total_remisiones_pendientes=0,
+                mensaje=(
+                    f'{remisiones_viejas} remisiones pendientes ignoradas '
+                    f'(todas con mas de {dias_max} dias de antiguedad)'
+                )
             )
 
         # Calcular diferencias de monto y fecha para cada remision

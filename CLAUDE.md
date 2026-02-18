@@ -188,8 +188,8 @@ Antes de registrar una factura Serie F, el sistema verifica si el proveedor tien
 
 | Nivel | Condicion | Accion |
 |-------|-----------|--------|
-| **SEGURO** | Sin remisiones pendientes del proveedor | Registrar normalmente |
-| **BLOQUEAR** | Proveedor tiene cualquier remision pendiente | NO registrar, reportar para revision manual |
+| **SEGURO** | Sin remisiones pendientes recientes (<=30 dias) | Registrar normalmente |
+| **BLOQUEAR** | Proveedor tiene remisiones pendientes recientes | NO registrar, reportar para revision manual |
 
 ### Query de remisiones pendientes
 
@@ -209,7 +209,9 @@ Doble filtro (`Estatus != 'Consolidada'` + `Consolida = 0`) como cinturon de seg
 
 1. Si `VALIDAR_REMISIONES_PENDIENTES=false` → SEGURO (toggle desactivado)
 2. Si no hay remisiones pendientes → SEGURO
-3. Si hay cualquier remision pendiente → **BLOQUEAR** (politica conservadora)
+3. Filtrar remisiones: descartar las que tienen mas de `DIAS_MAX_REMISION_PENDIENTE` dias (default 30)
+4. Si todas las remisiones son viejas (>30 dias) → SEGURO (remisiones abandonadas)
+5. Si hay remisiones recientes → **BLOQUEAR** (politica conservadora)
 
 La comparacion de monto/fecha se usa solo para enriquecer el mensaje de bloqueo (identifica el mejor candidato), pero no cambia la clasificacion.
 
@@ -220,6 +222,7 @@ La comparacion de monto/fecha se usa solo para enriquecer el mensaje de bloqueo 
 | `VALIDAR_REMISIONES_PENDIENTES` | `true` | Toggle para activar/desactivar |
 | `TOLERANCIA_MONTO_VALIDACION` | `2.0` | % tolerancia para comparar montos |
 | `DIAS_RANGO_VALIDACION` | `15` | +/- dias para comparar fechas |
+| `DIAS_MAX_REMISION_PENDIENTE` | `30` | Remisiones con mas de N dias se ignoran |
 
 ### Error code
 

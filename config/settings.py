@@ -76,6 +76,7 @@ class Settings:
     validar_remisiones_pendientes: bool = True  # Toggle para activar/desactivar
     tolerancia_monto_validacion: float = 2.0    # % tolerancia para comparar montos
     dias_rango_validacion: int = 15             # +/- dias para comparar fechas
+    dias_max_remision_pendiente: int = 30       # Remisiones con mas de N dias se ignoran
 
     # Adjuntos CFDI (copia de XML a carpeta de red SAV7)
     cfdi_adjuntos_dir: Path = field(
@@ -125,6 +126,7 @@ class Settings:
             validar_remisiones_pendientes=os.getenv('VALIDAR_REMISIONES_PENDIENTES', 'true').lower() == 'true',
             tolerancia_monto_validacion=float(os.getenv('TOLERANCIA_MONTO_VALIDACION', '2.0')),
             dias_rango_validacion=int(os.getenv('DIAS_RANGO_VALIDACION', '15')),
+            dias_max_remision_pendiente=int(os.getenv('DIAS_MAX_REMISION_PENDIENTE', '30')),
             numrec_rango_minimo=int(os.getenv('NUMREC_RANGO_MINIMO', '900000')),
             ncredito_rango_minimo=int(os.getenv('NCREDITO_RANGO_MINIMO', '50000')),
         )
